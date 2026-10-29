@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="backtest"></nav>
+  <span class="spacer"></span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="page wide">
+  <h1>Backtest</h1>
+  <p class="lede">Pick one scan date. The rules are applied with the candles up to that date only, then the entry type its trade score takes is followed through the candles after it. Results are in R, where 1 R is the distance from entry to stop loss, after Binance fees (maker for a limit entry or a target, taker for a market entry or a stop) and the funding paid or received at each funding time the trade was open over. Nothing is downloaded: it runs on the stored candles. Dates are UTC days.</p>
+  <div class="form">
+    <fieldset>
+      <legend>Coins</legend>
+      <label class="check all"><input type="checkbox" id="s-all" checked> All coins shown</label>
+      <label>Coins <select id="s-group" aria-label="Which coins to list"></select></label>
+      <div class="checks" id="s-symbols"></div>
+    </fieldset>
+    <div><label class="lbl" for="s-mode">Mode</label><select id="s-mode"></select></div>
+    <div><label class="lbl" for="s-date">Scan date</label><input type="date" id="s-date"></div>
+    <div><label class="lbl" for="s-maker">Maker fee, %</label><input type="number" id="s-maker" min="-0.1" max="1" step="0.001"></div>
+    <div><label class="lbl" for="s-taker">Taker fee, %</label><input type="number" id="s-taker" min="0" max="1" step="0.001"></div>
+    <label class="check"><input type="checkbox" id="s-bnb"> Fees paid in BNB (10% off)</label>
+    <label class="check"><input type="checkbox" id="s-funding" checked> Include funding</label>
+  </div>
+  <div class="actions"><button class="btn primary" id="s-run">Check this date</button></div>
+  <p class="status" id="s-status" role="status"></p>
+
+  <section id="s-result" hidden>
+    <h2 id="s-title"></h2>
+    <div class="filters" id="score-filters" aria-label="Score filters"></div>
+    <p class="status" id="s-filter-line"></p>
+    <p class="lede" id="s-rule-line"></p>
+    <div class="table-wrap"><table><thead><tr><th>Entry</th><th>Entered</th><th>Target hit</th><th>Stopped</th><th>Still open</th><th>Never entered</th><th>Not taken</th><th>Win rate</th><th>Total</th><th>Of which fees</th><th>Of which funding</th></tr></thead><tbody id="s-summary"></tbody></table></div>
+    <h2>Coin by coin</h2>
+    <div class="table-wrap"><table class="board"><thead><tr><th>Coin</th><th>Signal</th><th>HTF demand</th><th>HTF supply</th><th>Curve</th><th>ITF trend</th><th>LTF zone</th><th id="s-p1">Entry type 1</th><th id="s-p2">Entry type 2</th><th id="s-p3">Entry type 3</th><th></th></tr></thead><tbody id="s-rows"></tbody></table></div>
+  </section>
+
+  <h2>Past checks</h2>
+  <p class="lede">Every check is saved. Click one to open its report again, exactly as it was.</p>
+  <div class="table-wrap"><table class="board"><thead><tr><th>Check</th><th>Run at</th><th>Scan date</th><th>Mode</th><th>Coins</th><th>Entry type 1</th><th>Entry type 2</th><th>Entry type 3</th><th></th></tr></thead><tbody id="s-past"></tbody></table></div>
+</main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/backtest.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Runs the crypto zone scanner as a service: it starts when the computer starts, and restarts by itself within
+# 5 seconds if it ever stops. The schedule inside the app then keeps downloading the missing candles around the clock.
+#
+# Install (once):
+#   sudo cp deploy/crypto-scanner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now crypto-scanner
+# Log:      journalctl -u crypto-scanner -f
+# Restart:  sudo systemctl restart crypto-scanner   (after unzipping an update)
+# Stop:     sudo systemctl stop crypto-scanner
+#
+# If the app lives somewhere else, change the two paths below. Settings and secrets stay in .env, which the app reads.
+
+[Unit]
+Description=Crypto zone scanner (FastAPI)
+After=network-online.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html/scan/advance_app/crypto_zone_scanner
+ExecStart=/var/www/html/scan/advance_app/crypto_zone_scanner/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+# Give running jobs a moment to finish cleanly on stop or restart.
+TimeoutStopSec=20
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

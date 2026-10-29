@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="scanner"></nav>
+  <span class="spacer"></span>
+  <span class="badge" id="feed">Checking prices</span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="page wide">
+  <div class="filters">
+    <label>Coins <select id="f-group" aria-label="Which coins to show"></select></label>
+    <label>Mode <select id="f-mode"></select></label>
+    <select id="f-signal" aria-label="Signal"><option value="">Every signal</option><option value="BUY">Long</option><option value="SELL">Short</option><option value="TRADE">Long or short</option><option value="NO_TRADE">No trade</option></select>
+    <select id="f-state" aria-label="State"><option value="">Any state</option><option value="TOUCHING_NOW">Touching now</option><option value="APPROACHING">Approaching</option><option value="JUST_FORMED">Just formed</option><option value="ACTIVE">Active</option></select>
+    <select id="f-conf" aria-label="Confirmation score"><option value="">Confirmation: any</option><option value="50">Confirmation: moderate or better</option><option value="75">Confirmation: strong</option></select>
+    <input type="text" id="f-search" placeholder="BTC" aria-label="Search by symbol">
+    <select id="f-all-ltf" aria-label="Other LTF zones" title="Other LTF zones between the HTF zone and the price, listed under each coin, at or above this score"><option value="">Other LTF zones: off</option><option value="5">Other LTF zones: score 5+</option><option value="6">Other LTF zones: score 6+</option><option value="7">Other LTF zones: score 7+</option><option value="8">Other LTF zones: score 8</option></select>
+  </div>
+  <div class="filters" id="score-filters" aria-label="Score filters"></div>
+  <p class="status" id="hidden-line"></p>
+  <p class="status" id="bias"></p>
+  <p class="status" id="progress" role="status"></p>
+  <div class="counts" id="counts" role="group" aria-label="Results by signal and state"></div>
+  <p class="status" id="status" role="status"></p>
+  <div class="table-wrap">
+    <table class="board">
+      <thead><tr><th>Coin</th><th>HTF demand</th><th>HTF supply</th><th>Curve</th><th>ITF trend</th><th>LTF zone</th><th>State</th><th>Signal</th><th>Confirmation</th><th>Entry, stop loss, target</th><th>Time</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <h2>Recent alerts</h2>
+  <ul class="log" id="alerts"></ul>
+  <p class="foot" id="foot"></p>
+</main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/scanner.js"></script>
+</body>
+</html>

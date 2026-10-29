@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="settings"></nav>
+  <span class="spacer"></span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="page">
+  <h1>Settings</h1>
+  <p class="status" id="status" role="status"></p>
+
+  <h2>Binance and live prices</h2>
+  <p class="lede">Market data comes from Binance USDT-M futures. It is public: no API key is needed, and the app never places an order.</p>
+  <div class="actions"><button class="btn" id="reconnect">Restart live prices</button><span id="calls" class="foot"></span></div>
+
+  <h2>Coin list</h2>
+  <p class="lede">USDT perpetuals the scanner downloads and scans. On the very first start it is filled with the top coins by 24 hour volume. A new coin is downloaded and scanned in the background.</p>
+  <div class="chips" id="universe"></div>
+  <div class="filters"><input type="text" id="find" placeholder="SOL" aria-label="Find a coin by symbol"><button class="btn" id="find-go">Find</button></div>
+  <div class="chips" id="found"></div>
+  <div class="filters">
+    <label>Top coins by 24 hour volume <input type="number" id="top_n" min="1" max="300" step="1" style="width:6em"></label>
+    <button class="btn" id="top-load">Show them</button>
+    <label class="check"><input type="checkbox" id="universe_auto"> Keep my list as the top N automatically (checked every day; new coins are downloaded)</label>
+    <button class="btn" id="auto-save">Save</button>
+  </div>
+  <div class="filters">
+    <input type="text" id="paste" placeholder="BTC, ETHUSDT, SOL" aria-label="Symbols to add, separated by commas or spaces" style="flex:1;min-width:260px">
+    <button class="btn" id="paste-go">Find these symbols</button>
+  </div>
+  <div id="picker" hidden>
+    <p class="lede" id="picker-note"></p>
+    <div class="actions"><button class="btn" id="pick-all">Select all</button><button class="btn" id="pick-none">Select none</button><button class="btn primary" id="pick-add">Add selected</button><button class="btn" id="pick-replace">Use only the selected</button></div>
+    <div class="checks picker" id="picker-list"></div>
+  </div>
+
+  <h2>Zone rules</h2>
+  <div class="filters"><label>Apply to <select id="th-scope"><option value="">All timeframes</option></select></label></div>
+  <div class="form" id="th-form"></div>
+  <div class="actions"><button class="btn primary" id="th-save">Save zone rules</button><button class="btn" id="rebuild">Rebuild all zones with these rules</button></div>
+
+  <h2>Zone marking</h2>
+  <p class="lede">How a zone is found, tested, used up and scored, and how much history is searched. The Backtest page reads these settings at once, so you can check the same scan date under each. The dashboard follows after the rebuild.</p>
+  <div class="form">
+    <div><label class="lbl" for="marking_rule">Zones are marked by</label>
+      <select id="marking_rule">
+        <option value="scanner">scanner.py v6.4: any candle as leg-in, leg-out closes beyond the leg-in close, lines from the base candles, every candle that reaches the proximal line is a test, a close inside the zone uses it up</option>
+        <option value="pdf">GTF course PDF: exciting leg-in, leg-out closes beyond the whole leg-in, distal line from the leg-in or leg-out wick when it is beyond the base, gap candles, tests counted per visit</option>
+      </select></div>
+    <div><label class="lbl" for="htf_zone_pick">Nearest HTF demand and supply for the curve</label>
+      <select id="htf_zone_pick">
+        <option value="fresh">Never tested only (GTF PDF): a zone price has come back to is skipped, the next untested one is used</option>
+        <option value="any">Any live zone (scanner.py): tested zones count too</option>
+      </select></div>
+    <div><label class="lbl" for="zone_history">History searched for zones</label>
+      <select id="zone_history">
+        <option value="scanner">Windows per timeframe, as scanner.py had them, set for crypto: 1 min 14 days, 5 and 15 min 30 days, 30 min, 2 hr and 4 hr 90 days, 1 hr one year, day and above everything since the coin's listing</option>
+        <option value="all">All stored history</option>
+      </select></div>
+  </div>
+  <div class="actions"><button class="btn primary" id="marking-save">Save and rebuild all zones</button></div>
+
+  <h2>Analysis modes</h2>
+  <p class="lede">Each mode reads an HTF for location and curve, an ITF for trend, and an LTF for the execution zone. The scanner runs the ticked ones.</p>
+  <div class="checks picker" id="modes"></div>
+  <div class="actions"><button class="btn primary" id="modes-save">Save modes</button></div>
+
+  <h2>Trade side rule</h2>
+  <p class="lede">How the curve and the ITF trend decide between long, short and no trade, and when the ITF counts as up or down. Saving rescans every coin so the dashboard follows the rule you chose.</p>
+  <div class="form">
+    <div><label class="lbl" for="direction_rule">Long or short is decided by</label>
+      <select id="direction_rule">
+        <option value="location">Location beats trend: near demand goes long, near supply goes short, the ITF decides only in equilibrium</option>
+        <option value="trend">The ITF trend: up goes long, down goes short, the curve only blocks the two extremes</option>
+      </select></div>
+    <div><label class="lbl" for="itf_rule">ITF trend: the 50 SMA slope over 7 candles must pass</label>
+      <select id="itf_rule">
+        <option value="atr">A share of the coin's average move per candle (adapts to each coin and timeframe)</option>
+        <option value="pct">A fixed share of price (scanner.py used 0.05%)</option>
+      </select></div>
+    <div><label class="lbl" for="itf_atr_mult">Average-move rule: times the average move of the last 14 candles</label><input type="number" id="itf_atr_mult" min="0" max="5" step="0.01"></div>
+    <div><label class="lbl" for="itf_slope_pct">Price rule: % of price</label><input type="number" id="itf_slope_pct" min="0" max="5" step="0.01"></div>
+  </div>
+  <div class="actions"><button class="btn primary" id="rule-save">Save and rescan</button></div>
+
+  <h2>Trade score and entry type</h2>
+  <p class="lede">The trade score is freshness (fresh 3, tested once 1.5, tested twice 0) plus strength (a gap or two exciting candles 2, one exciting candle 1) plus time at base (1 to 3 candles 2, 4 to 5 candles 1, more 0), plus 1 when the 20 or 50 EMA runs through the zone. A score of 7 or more takes entry type 1, a limit at the proximal line. A score of 5 to 6.5 takes entry type 2 or 3. Below 5 there is no trade. The stop loss is the distal line for all three.</p>
+  <div class="form">
+    <div><label class="lbl" for="entry_23">A score of 5 to 6.5 enters with</label>
+      <select id="entry_23">
+        <option value="TYPE_3">Entry type 3: a candle closes inside the zone and the next closes back out of it (entry at that close)</option>
+        <option value="TYPE_2">Entry type 2: a candle closes inside the zone and the next opens inside it (entry at that open)</option>
+      </select></div>
+    <div><label class="lbl" for="min_stop_pct">Minimum stop distance, % of price (0 = off). Zones whose stop is closer are not traded: fees take too much of a thin zone's risk</label><input type="number" id="min_stop_pct" min="0" max="10" step="0.05"></div>
+    <div><label class="lbl" for="min_bases">Minimum base candles (0 = off). Zones with fewer base candles are not traded</label><input type="number" id="min_bases" min="0" max="10" step="1"></div>
+    <div><label class="lbl" for="max_bases">Strong base, GTF PDF page 22: maximum base candles (0 = off). A zone with more is traded only if price left it with a gap or 2 exciting candles</label><input type="number" id="max_bases" min="0" max="10" step="1"></div>
+    <label class="check"><input type="checkbox" id="skip_reaction_zones"> Credibility, GTF PDF pages 35 to 36: skip non-authentic zones (a zone formed in the reaction of an earlier zone of the same side, overlapping it), unless its leg-out is strong (good closing)</label>
+    <label class="check"><input type="checkbox" id="check_next_htf"> Higher timeframe caution, GTF PDF page 30: no trade when a fresh opposite zone one timeframe above the HTF (4 hr mode: daily, daily mode: weekly) lies between the entry and the target</label>
+  </div>
+  <p class="lede">These only filter which zones are traded (dashboard, alerts, paper, backtest and checks). How zones are found and scored does not change, and at 0 everything works as before.</p>
+  <div class="actions"><button class="btn primary" id="entry-save">Save and rescan</button></div>
+
+  <h2>Costs</h2>
+  <p class="lede">Binance USDT-M futures fees for a regular account. Entry type 1 and targets are limit orders and pay the maker fee; entry types 2 and 3, stop losses and manual closes take the price that is there and pay the taker fee. Funding is paid or received at each funding time a trade is open over, from the stored funding history. The backtest, the scan-date check and paper trading use these.</p>
+  <div class="form">
+    <div><label class="lbl" for="fee_maker_pct">Maker fee, %</label><input type="number" id="fee_maker_pct" min="-0.1" max="1" step="0.001"></div>
+    <div><label class="lbl" for="fee_taker_pct">Taker fee, %</label><input type="number" id="fee_taker_pct" min="0" max="1" step="0.001"></div>
+    <label class="check"><input type="checkbox" id="fee_bnb"> Fees paid in BNB (10% off)</label>
+    <label class="check"><input type="checkbox" id="include_funding"> Include funding</label>
+  </div>
+
+  <h2>Paper trading</h2>
+  <div class="form">
+    <div><label class="lbl" for="paper_capital">Starting balance, USDT</label><input type="number" id="paper_capital" min="10" step="100"></div>
+    <div><label class="lbl" for="paper_risk_pct">Risk per trade, % of the balance</label><input type="number" id="paper_risk_pct" min="0.05" max="10" step="0.05"></div>
+    <div><label class="lbl" for="paper_leverage">Leverage</label><input type="number" id="paper_leverage" min="1" max="125" step="1"></div>
+    <div><label class="lbl" for="paper_mmr_pct">Maintenance margin rate for the estimated liquidation price, %</label><input type="number" id="paper_mmr_pct" min="0" max="10" step="0.05"></div>
+    <div><label class="lbl" for="paper_slippage_pct">Slippage on manual close, %</label><input type="number" id="paper_slippage_pct" min="0" max="2" step="0.01"></div>
+    <label class="check"><input type="checkbox" id="all_ltf_zones"> Alerts and automatic paper orders on every LTF zone (off: only the best zone of each coin, the one on the dashboard row)</label>
+  </div>
+
+  <h2>Confirmation score</h2>
+  <div class="form">
+    <div><label class="lbl" for="confirm_volume_mult">Leg-out volume: at least this many times the average of the 20 candles before it</label><input type="number" id="confirm_volume_mult" min="0" max="10" step="0.1"></div>
+    <div><label class="lbl" for="confirm_funding_pct">Funding: the crowd leans hard the trade's way beyond, % per funding interval</label><input type="number" id="confirm_funding_pct" min="0" max="1" step="0.005"></div>
+  </div>
+
+  <h2>History kept</h2>
+  <p class="lede">Days of candles downloaded the first time and kept afterwards, for the short timeframes. 2 hours and above are kept from the coin's listing date. These reach well past what the zone rules search; raise them only for longer backtests (more history makes the first download and the database bigger). After that, only the candles that closed since the last one stored are downloaded.</p>
+  <div class="form">
+    <div><label class="lbl" for="hd-1m">1 min, days</label><input type="number" id="hd-1m" min="1" max="3650" step="1"></div>
+    <div><label class="lbl" for="hd-5m">5 min, days</label><input type="number" id="hd-5m" min="1" max="3650" step="1"></div>
+    <div><label class="lbl" for="hd-15m">15 min, days</label><input type="number" id="hd-15m" min="1" max="3650" step="1"></div>
+    <div><label class="lbl" for="hd-30m">30 min, days</label><input type="number" id="hd-30m" min="1" max="3650" step="1"></div>
+    <div><label class="lbl" for="hd-1h">1 hr, days</label><input type="number" id="hd-1h" min="1" max="3650" step="1"></div>
+  </div>
+
+  <h2>Time zone</h2>
+  <div class="form">
+    <div><label class="lbl" for="display_tz">Times on the pages are shown in (candles are always built in UTC, as Binance builds them)</label><input type="text" id="display_tz" placeholder="Asia/Riyadh"></div>
+  </div>
+  <div class="actions"><button class="btn primary" id="misc-save">Save costs, paper, confirmation, history and time zone</button></div>
+
+  <h2>Trade management: trailing stop loss</h2>
+  <p class="lede">Off by default: every trade keeps its first stop and its target, as before. When on, once price has gone the chosen number of R in the trade's favour the stop moves to break-even (entry plus fees), then follows the trade: step moves it up 0.5 R at a time (at +2 R the stop is at +1 R), swing puts it under each new swing low (above each swing high for a short), ATR keeps it a number of ATRs behind the best price, lock moves it in steps of a % of the distance to the target (entry 100, target 200, 10 %: at 112 the stop goes to 110, at 125 to 120) and can move the target forward when price reaches it. It only ever tightens and moves when a candle of the chosen timeframe closes. Paper trading uses these settings for new positions; a backtest run uses them unless it names its own.</p>
+  <div class="form">
+    <div><label class="lbl" for="trail_method">Trailing method</label>
+      <select id="trail_method"><option value="off">Off</option><option value="step">Step (R based)</option><option value="swing">Swing (structure)</option><option value="atr">ATR</option><option value="lock">Lock % of target</option></select></div>
+    <div><label class="lbl" for="trail_start_r">Start trailing at, R</label><input type="number" id="trail_start_r" min="0.25" max="10" step="0.25"></div>
+    <div><label class="lbl" for="trail_tf">Timeframe that moves the stop</label>
+      <select id="trail_tf"><option value="ltf">LTF: the trade's own timeframe</option><option value="itf">ITF: the mode's middle timeframe (moves less often)</option><option value="1m">1 minute: reacts to fast moves inside a candle (needs 1-minute history)</option></select></div>
+    <div><label class="lbl" for="trail_atr_mult">ATR multiple</label><input type="number" id="trail_atr_mult" min="0.5" max="10" step="0.5"></div>
+    <div><label class="lbl" for="trail_swing">Swing size, candles on each side</label><input type="number" id="trail_swing" min="1" max="5" step="1"></div>
+    <div><label class="lbl" for="trail_lock_pct">Lock: step, % of the distance from entry to target</label><input type="number" id="trail_lock_pct" min="1" max="100" step="1"></div>
+    <div><label class="lbl" for="trail_lock_gap_pct">Lock: price must pass a step by this % of one step before the stop moves</label><input type="number" id="trail_lock_gap_pct" min="0" max="100" step="5"></div>
+    <div><label class="lbl" for="trail_lock_target">Lock: when price reaches the target</label>
+      <select id="trail_lock_target"><option value="move">Move the target forward one step, the trade runs on</option><option value="close">Close the trade at the target</option></select></div>
+    <label class="check"><input type="checkbox" id="trail_keep_target"> Step, swing, ATR: keep the fixed target while trailing (off: remove it and let the trade run). Lock uses its own choice above</label>
+    <p class="sub" id="trail-example"></p>
+  </div>
+  <div class="actions"><button class="btn primary" id="trail-save">Save trade management</button></div>
+
+  <h2>Telegram alerts</h2>
+  <p class="lede" id="tg-state"></p>
+  <div class="form">
+    <div><label class="lbl" for="telegram_token">Bot token</label><input type="password" id="telegram_token" autocomplete="off" placeholder="leave empty to keep the stored one"></div>
+    <div><label class="lbl" for="telegram_chat_id">Chat id</label><input type="text" id="telegram_chat_id"></div>
+    <label class="check"><input type="checkbox" id="telegram_alerts"> Send alerts to Telegram</label>
+  </div>
+  <div class="actions"><button class="btn primary" id="tg-save">Save Telegram settings</button><button class="btn" id="tg-test">Send test alert</button></div>
+
+  <h2>Recent jobs</h2>
+  <div class="table-wrap"><table><thead><tr><th>Job</th><th>Started</th><th>Ended</th><th>Status</th><th>Detail</th></tr></thead><tbody id="jobs"></tbody></table></div>
+
+  <h2>Rejection log</h2>
+  <p class="lede">Zone candidates from the last 90 days that failed a rule, newest first. Use it to check the engine against your own marking.</p>
+  <div class="table-wrap"><table><thead><tr><th>Coin</th><th>Timeframe</th><th>Candle</th><th>Reason</th></tr></thead><tbody id="rejections"></tbody></table></div>
+</main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/settings.js"></script>
+</body>
+</html>

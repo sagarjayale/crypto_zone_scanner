@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="data"></nav>
+  <span class="spacer"></span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="page">
+  <h1>Stored candles</h1>
+  <p class="lede">Candles are downloaded from Binance USDT-M futures (public data, no key) and kept here, in UTC. Download and scan fetches only the candles that closed since the last one stored, then scans them. It runs in the background: each coin can be used on the other pages as soon as it is ready, while the rest carry on. The schedule does this by itself every minute, around the clock.</p>
+  <dl class="figures" id="weight"></dl>
+  <div class="actions">
+    <button class="btn primary" id="sync-all">Download and scan all</button>
+    <button class="btn" id="scan-all">Scan all</button>
+    <button class="btn" id="repair">Repair gaps</button>
+    <button class="btn" id="backfill">Download full history again</button>
+    <button class="btn" id="instruments">Refresh coins</button>
+  </div>
+  <p class="status" id="status" role="status"></p>
+  <p class="status" id="ready-line"></p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Coin</th><th>Timeframe</th><th>Candles</th><th>First candle kept</th><th>Last candle</th><th>Last scanned</th><th>Last sync</th><th>Missing candles (30 days)</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/data.js"></script>
+</body>
+</html>

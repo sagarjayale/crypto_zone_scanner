@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chart and replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="chart"></nav>
+  <label>Coins <select id="group" aria-label="Which coins to list"></select></label>
+  <label>Coin <select id="symbol"></select></label>
+  <label>Mode <select id="mode"></select></label>
+  <div class="seg" id="timeframes" role="group" aria-label="Timeframe"></div>
+  <span class="spacer"></span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="desk">
+  <div class="stage">
+    <div class="layerbar">
+      <span class="lbl">Show on the chart</span>
+      <label class="check"><input type="checkbox" id="l-demand" checked> HTF demand</label>
+      <label class="check"><input type="checkbox" id="l-supply" checked> HTF supply</label>
+      <label class="check"><input type="checkbox" id="l-curve"> Curve</label>
+      <label class="check"><input type="checkbox" id="l-ltf"> LTF zone</label>
+      <label class="check" title="Other LTF zones between the HTF zone and the price, on the trade side, at or above this score">Other LTF zones
+        <select id="l-ltf-other"><option value="">Off</option><option value="5">score 5+</option><option value="6">score 6+</option><option value="7">score 7+</option><option value="8">score 8</option></select></label>
+      <label class="check"><input type="checkbox" id="l-entry"> Entry</label>
+      <label class="check"><input type="checkbox" id="l-stop"> Stop loss</label>
+      <label class="check"><input type="checkbox" id="l-target"> Target</label>
+      <label class="check"><input type="checkbox" id="l-contact"> Contact zones</label>
+      <label class="check"><input type="checkbox" id="l-scores"> Zone scores</label>
+      <label class="check"><input type="checkbox" id="l-all"> All zones</label>
+      <span class="sep"></span>
+      <label class="check">Scan date <input type="date" id="scan-date"></label>
+      <label class="check"><input type="checkbox" id="l-scan"> Scan date line</label>
+      <button class="btn" id="scan-clear" disabled>Back to today</button>
+    </div>
+    <div class="chart-wrap">
+      <div id="chart"></div>
+      <div class="notice" id="notice"><p></p></div>
+    </div>
+    <div class="transport" id="transport">
+      <span class="state" id="replay-state">Live chart</span>
+      <span class="foot" id="replay-hint">Replay starts from the scan date</span>
+      <input type="hidden" id="replay-date">
+      <button class="btn primary" id="replay-start">Start replay</button>
+      <button class="btn" id="replay-play" disabled>Play</button>
+      <button class="btn" id="replay-step" disabled>Step one bar</button>
+      <button class="btn" id="replay-next" disabled>Jump to next event</button>
+      <label>Speed <select id="replay-speed" disabled>
+        <option value="1">1 bar a second</option><option value="2" selected>2 bars a second</option>
+        <option value="5">5 bars a second</option><option value="15">15 bars a second</option><option value="40">40 bars a second</option>
+      </select></label>
+      <button class="btn" id="replay-exit" disabled>Exit replay</button>
+    </div>
+  </div>
+  <aside class="rail">
+    <section>
+      <h2>Result for this mode</h2>
+      <div id="result-panel"><p class="empty">Loading</p></div>
+    </section>
+    <section id="all-zones" hidden>
+      <h2>All zones on this timeframe</h2>
+      <div class="zone-filter">
+        <label class="check"><input type="checkbox" id="show-demand" checked> <span class="demand-t">Demand</span></label>
+        <label class="check"><input type="checkbox" id="show-supply" checked> <span class="supply-t">Supply</span></label>
+        <label class="check"><input type="checkbox" id="show-old"> Violated and used-up</label>
+      </div>
+      <details class="zone-filter-more">
+        <summary>Also draw zones from other timeframes</summary>
+        <div class="zone-filter" id="overlay-tfs"></div>
+      </details>
+      <div id="contact-wrap" hidden>
+        <p class="zone-filter-title">HTF and contact zones of the selected setup</p>
+        <div class="zone-filter" id="contact-tfs"></div>
+      </div>
+      <div id="zones"></div>
+    </section>
+    <section id="selected-wrap" hidden>
+      <h2>Selected zone</h2>
+      <div id="detail"><p class="empty">Select a zone to see its score, plan and history.</p></div>
+    </section>
+    <section>
+      <h2>Events</h2>
+      <ul class="log" id="log"></ul>
+    </section>
+  </aside>
+</main>
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/chart.js"></script>
+</body>
+</html>
