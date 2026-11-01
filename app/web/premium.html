@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Premium Filters</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="premium"></nav>
+  <span class="spacer"></span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="page wide eye">
+  <h1 class="eye-title premium-title"><span aria-hidden="true">♛</span> Premium Filters</h1>
+  <div class="filters eye-more">
+    <label>Zones <select id="f-mode" aria-label="Zone timeframe"></select></label>
+    <label>Side <select id="f-side"><option value="both">Demand and supply</option><option value="demand">Demand</option><option value="supply">Supply</option></select></label>
+    <label>Coins <select id="f-group" aria-label="Which coins to show"></select></label>
+  </div>
+  <div class="premium">
+    <div class="premium-list" id="p-list" role="listbox" aria-label="Premium filter">
+      <button data-v="low_vol" role="option">Low volatility</button>
+      <button data-v="high_vol" role="option">High volatility</button>
+      <button data-v="reacting" role="option">Reacting from HTF zone</button>
+    </div>
+    <div>
+      <p class="status" id="s-line" role="status">Loading</p>
+      <div class="eye-cards" id="cards"></div>
+      <p class="lede eye-help" id="help"></p>
+    </div>
+  </div>
+</main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/eyecommon.js"></script>
+<script src="/static/js/premium.js"></script>
+</body>
+</html>

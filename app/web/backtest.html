@@ -17,7 +17,7 @@
 </header>
 <main class="page wide">
   <h1>Backtest</h1>
-  <p class="lede">Pick one scan date. The rules are applied with the candles up to that date only, then the entry type its trade score takes is followed through the candles after it. Results are in R, where 1 R is the distance from entry to stop loss, after Binance fees (maker for a limit entry or a target, taker for a market entry or a stop) and the funding paid or received at each funding time the trade was open over. Nothing is downloaded: it runs on the stored candles. Dates are UTC days.</p>
+  <p class="lede">Pick one scan date. <strong>From this date to today</strong> runs the rules on every closed candle from that date until now, exactly as live: setups found, limit orders placed, filled when price touches them, then stopped, at target, trailed or still open (trailing as set in Settings). <strong>This date only</strong> applies the rules with the candles up to that date, then follows the entry type its trade score takes through the candles after it. Results are in R, where 1 R is the distance from entry to stop loss, after Binance fees (maker for a limit entry or a target, taker for a market entry or a stop) and the funding paid or received at each funding time the trade was open over. Nothing is downloaded: it runs on the stored candles. Dates are UTC days.</p>
   <div class="form">
     <fieldset>
       <legend>Coins</legend>
@@ -31,9 +31,24 @@
     <div><label class="lbl" for="s-taker">Taker fee, %</label><input type="number" id="s-taker" min="0" max="1" step="0.001"></div>
     <label class="check"><input type="checkbox" id="s-bnb"> Fees paid in BNB (10% off)</label>
     <label class="check"><input type="checkbox" id="s-funding" checked> Include funding</label>
+    <fieldset>
+      <legend>Run</legend>
+      <label class="check"><input type="radio" name="s-kind" id="s-kind-period" value="period" checked> From this date to today (every candle)</label>
+      <label class="check"><input type="radio" name="s-kind" id="s-kind-date" value="date"> This date only</label>
+    </fieldset>
   </div>
-  <div class="actions"><button class="btn primary" id="s-run">Check this date</button></div>
+  <div class="actions"><button class="btn primary" id="s-run">Run from this date</button><button class="btn" id="p-cancel" hidden>Cancel run</button></div>
   <p class="status" id="s-status" role="status"></p>
+
+  <section id="p-result" hidden>
+    <h2 id="p-title"></h2>
+    <p class="status" id="p-warn"></p>
+    <p class="lede" id="p-orders"></p>
+    <div class="table-wrap"><table><thead><tr><th></th><th>Closed trades</th><th>Target or profit</th><th>Stopped</th><th>Win rate</th><th>Stop-loss rate</th><th>Average per trade</th><th>Total</th></tr></thead><tbody id="p-summary"></tbody></table></div>
+    <div class="actions"><a class="btn" id="p-csv" href="#" download>Download CSV</a><button class="btn" id="p-delete">Delete this run</button></div>
+    <h2>Trades</h2>
+    <div class="table-wrap"><table class="board"><thead><tr><th>Coin</th><th>Mode</th><th>Side</th><th>Zone formed</th><th>Filled</th><th>Exit</th><th>Entry</th><th>Stop</th><th>Target</th><th>Exit price</th><th>Why</th><th>Result</th><th></th></tr></thead><tbody id="p-trades"></tbody></table></div>
+  </section>
 
   <section id="s-result" hidden>
     <h2 id="s-title"></h2>
@@ -45,7 +60,11 @@
     <div class="table-wrap"><table class="board"><thead><tr><th>Coin</th><th>Signal</th><th>HTF demand</th><th>HTF supply</th><th>Curve</th><th>ITF trend</th><th>LTF zone</th><th id="s-p1">Entry type 1</th><th id="s-p2">Entry type 2</th><th id="s-p3">Entry type 3</th><th></th></tr></thead><tbody id="s-rows"></tbody></table></div>
   </section>
 
-  <h2>Past checks</h2>
+  <h2>Past runs from a date to today</h2>
+  <p class="lede">Every run is saved. Click one to open it again.</p>
+  <div class="table-wrap"><table class="board"><thead><tr><th>Run</th><th>Run at</th><th>From</th><th>To</th><th>Mode</th><th>Coins</th><th>Closed trades</th><th>Win rate</th><th>Stop-loss rate</th><th>Average</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody id="p-past"></tbody></table></div>
+
+  <h2>Past checks of one date</h2>
   <p class="lede">Every check is saved. Click one to open its report again, exactly as it was.</p>
   <div class="table-wrap"><table class="board"><thead><tr><th>Check</th><th>Run at</th><th>Scan date</th><th>Mode</th><th>Coins</th><th>Entry type 1</th><th>Entry type 2</th><th>Entry type 3</th><th></th></tr></thead><tbody id="s-past"></tbody></table></div>
 </main>

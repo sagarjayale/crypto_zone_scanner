@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTF EYE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">Crypto zone scanner</span>
+  <nav class="nav" id="nav" aria-label="Pages" data-current="eye"></nav>
+  <span class="spacer"></span>
+  <span class="badge" id="token">Checking Binance</span>
+</header>
+<main class="page wide eye">
+  <h1 class="eye-title">GTF EYE Coin Scanner</h1>
+  <div class="eye-groups">
+    <div class="eye-group"><div class="toggle" id="t-criteria" role="group" aria-label="Criteria">
+      <button data-v="approaching">Approaching</button><button data-v="inzone">In zone / Reacting</button></div>
+      <span class="eye-cap">Select criteria</span></div>
+    <div class="eye-group"><div class="toggle" id="t-side" role="group" aria-label="Zone type">
+      <button data-v="demand">Demand</button><button data-v="supply">Supply</button></div>
+      <span class="eye-cap">Select zone type</span></div>
+    <div class="eye-group"><div class="toggle" id="t-kind" role="group" aria-label="Mode">
+      <button data-v="standard">Standard mode</button><button data-v="gtf">GTF mode</button></div>
+      <span class="eye-cap">Select mode</span></div>
+  </div>
+  <div class="eye-tfs" id="t-mode" role="group" aria-label="Zone timeframe"></div>
+  <div class="filters eye-more">
+    <label>Coins <select id="f-group" aria-label="Which coins to show"></select></label>
+    <label>Zone score <select id="f-score"><option value="0">Any</option><option value="5">5 or more</option><option value="6">6 or more</option><option value="7">7 or more</option><option value="8">8</option></select></label>
+    <input type="text" id="f-search" placeholder="Search coin" aria-label="Search coin">
+    <button class="btn primary" id="f-reset">Reset filter</button>
+  </div>
+  <p class="status" id="s-line" role="status">Loading</p>
+  <div class="eye-cards" id="cards"></div>
+  <p class="lede eye-help" id="help"></p>
+</main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/eyecommon.js"></script>
+<script src="/static/js/eye.js"></script>
+</body>
+</html>

@@ -17,4 +17,4 @@ def test_api_boots_and_reports_empty_state():
         assert c.get("/api/setups").status_code == 200
         assert c.get("/api/zone/999999").status_code == 404
         assert c.post("/api/data/sync/NOPEUSDT").status_code == 404           # not a coin the app knows
-        assert len([r for r in app.routes if getattr(r, "tags", None)]) == 48   # data 10, scan 9, system 8, scan-date checks 4, replay 1, backtest 5, live 2, paper 9
+        assert len([r for r in app.routes if getattr(r, "tags", None)]) == 50   # data 10, scan 10, system 8, scan-date checks 4, replay 1, backtest 6, live 2, paper 9

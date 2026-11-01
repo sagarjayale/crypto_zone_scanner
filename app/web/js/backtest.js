@@ -118,11 +118,122 @@ function costText(c) {
   return `, fees ${c.fee_maker_pct}% maker and ${c.fee_taker_pct}% taker${c.fee_bnb ? " less 10% (BNB)" : ""}, funding ${c.include_funding ? "included" : "left out"}`;
 }
 
+// ---- from this date to today: the backtest engine runs every closed candle from the scan date until now
+const kind = () => ($("s-kind-date").checked ? "date" : "period");
+const today = () => new Date().toISOString().slice(0, 10);          // UTC day, as the candles
+const WHY = { target: "Target", stop: "Stop", trail: "Trailing stop", open: "Still open" };
+const pct = (v) => (v == null ? "" : `${v}%`);
+const rTxt = (v) => (v == null ? "" : signedR(Math.round(v * 1000) / 1000));
+let running = null, pollTimer = null, shownRun = null;
+
+function labelRun() { $("s-run").textContent = kind() === "period" ? "Run from this date" : "Check this date"; }
+for (const id of ["s-kind-period", "s-kind-date"]) $(id).onchange = labelRun;
+
+function summaryRow(label, x) {
+  if (!x || !x.trades) return el("tr", {}, el("td", {}, label), el("td", { class: "num" }, "0"), el("td", { colspan: "6", class: "muted" }, "no closed trade"));
+  const wins = Math.round(x.trades * x.win_rate / 100);
+  return el("tr", {}, el("td", {}, label), el("td", { class: "num" }, String(x.trades)), el("td", { class: "num" }, String(wins)),
+    el("td", { class: "num" }, String(x.trades - wins)), el("td", { class: "num" }, pct(x.win_rate)), el("td", { class: "num" }, pct(x.stop_rate)),
+    el("td", { class: "num " + (x.expectancy > 0 ? "win" : x.expectancy < 0 ? "loss" : "") }, rTxt(x.expectancy)), el("td", { class: "num" }, rTxt(x.total_r)));
+}
+
+function showRun(r, warning) {
+  shownRun = r.id;
+  const st = r.settings || {}, s = r.summary || {}, coins = (st.symbols || []).length;
+  $("p-result").hidden = false; $("s-result").hidden = true;
+  $("p-title").textContent = `Run #${r.id}: ${st.start} to ${st.end}, ${(st.modes || []).map((m) => MODE_LABEL[m] || m).join(", ")} mode, ${coins} ${coins === 1 ? "coin" : "coins"}${costText(st)}`;
+  $("p-warn").textContent = warning || "";
+  const o = s.orders;
+  $("p-orders").textContent = r.status !== "done" ? "" : [
+    o ? `${o.setups} setups found, ${o.filled} filled, ${o.never_filled} never filled (price did not come back, or the zone or side changed first)` : "",
+    `${s.open_trades || 0} still open today`, s.max_drawdown_r != null ? `largest drop ${rTxt(-s.max_drawdown_r)}` : "",
+    s.longest_losing_streak != null ? `longest run of stops ${s.longest_losing_streak}` : ""].filter(Boolean).join(" · ") + ".";
+  const half = s.halves, side = s.by_side || {};
+  const mid = half ? half.mid.slice(0, 10) : "";
+  $("p-summary").replaceChildren(summaryRow("All", s),
+    ...(half ? [summaryRow(`First half (to ${mid})`, half.first), summaryRow(`Second half (from ${mid})`, half.second)] : []),
+    summaryRow("Longs", side.demand), summaryRow("Shorts", side.supply));
+  $("p-csv").href = `/api/backtest/${r.id}/export`;
+  const body = $("p-trades"); body.replaceChildren();
+  const trades = r.trades || [];
+  if (!trades.length) body.append(el("tr", {}, el("td", { colspan: "13" }, r.status === "done" ? "No trade in this period: no setup passed the rules, or no order was filled." : "")));
+  for (const t of trades) {
+    const open = t.result === "open", long = t.side === "demand";
+    const link = `/chart?symbol=${encodeURIComponent(t.instrument_key)}&mode=${t.mode}&scan=${String(t.entry_ts).slice(0, 10)}`;
+    body.append(el("tr", {}, el("td", {}, names[t.instrument_key] || t.instrument_key), el("td", {}, MODE_LABEL[t.mode] || t.mode),
+      el("td", {}, el("span", { class: "tag " + (long ? "demand" : "supply") }, long ? "Long" : "Short"), el("span", { class: "sub" }, `score ${t.score}`)),
+      el("td", {}, stamp(t.zone_created_ts)), el("td", {}, stamp(t.entry_ts)), el("td", {}, open ? "" : stamp(t.exit_ts)),
+      el("td", { class: "num" }, fmtPrice(t.entry)), el("td", { class: "num" }, fmtPrice(t.stop)), el("td", { class: "num" }, fmtPrice(t.target)),
+      el("td", { class: "num" }, open ? "" : fmtPrice(t.exit_price)), el("td", {}, WHY[t.exit_reason] || t.exit_reason || ""),
+      el("td", { class: "num " + (open ? "" : t.result_r > 0 ? "win" : "loss") }, rTxt(t.result_r), el("span", { class: "sub" }, open ? "valued today" : "")),
+      el("td", {}, el("a", { class: "btn", href: link }, "Chart"))));
+  }
+}
+
+async function poll(id, warning) {
+  clearTimeout(pollTimer);
+  try {
+    const r = await api(`/api/backtest/${id}`);
+    if (r.status === "running") {
+      running = id; $("p-cancel").hidden = false; $("s-run").disabled = true;
+      say(`Run #${id} is going: ${r.progress || "starting"}. You can leave this page open or come back later.`);
+      pollTimer = setTimeout(() => poll(id, warning), 3000);
+      return;
+    }
+    running = null; $("p-cancel").hidden = true; $("s-run").disabled = false;
+    showRun(r, warning);
+    say(r.status === "done" ? `Run #${id} finished: ${r.progress}.` : r.status === "cancelled" ? `Run #${id} was cancelled.` : `Run #${id} failed. ${r.error || ""}`, r.status === "failed");
+    await loadRuns();
+  } catch (e) { say(`Could not read run #${id}. ${e.message}`, true); pollTimer = setTimeout(() => poll(id, warning), 6000); }
+}
+
+async function runPeriod(symbols) {
+  const start = $("s-date").value, end = today();
+  if (start >= end) return say("Pick a scan date before today.", true);
+  const out = await post("/api/backtest/run", { symbols, modes: [$("s-mode").value], start, end, entry_plan: "rule",
+    fee_maker_pct: Number($("s-maker").value), fee_taker_pct: Number($("s-taker").value), fee_bnb: $("s-bnb").checked, include_funding: $("s-funding").checked });
+  $("p-result").hidden = true;
+  await poll(out.run_id, out.warning);
+  await loadRuns();
+}
+
+async function loadRuns() {
+  const list = await api("/api/backtest/runs"), body = $("p-past");
+  body.replaceChildren();
+  if (!list.length) { body.append(el("tr", {}, el("td", { colspan: "13" }, "No runs yet. Pick a scan date, choose From this date to today, and press Run from this date."))); return; }
+  for (const r of list) {
+    const st = r.settings || {}, h = r.headline || {};
+    body.append(el("tr", { class: "pick", "aria-selected": String(r.id === shownRun), onclick: () => poll(r.id) },
+      el("td", {}, `#${r.id}`), el("td", {}, stamp(r.created_at)), el("td", {}, st.start || ""), el("td", {}, st.end || ""),
+      el("td", {}, (st.modes || []).map((m) => MODE_LABEL[m] || m).join(", ")), el("td", { class: "num" }, String((st.symbols || []).length)),
+      el("td", { class: "num" }, h.trades == null ? "" : String(h.trades)), el("td", { class: "num" }, pct(h.win_rate)), el("td", { class: "num" }, pct(h.stop_rate)),
+      el("td", { class: "num" }, rTxt(h.expectancy)), el("td", { class: "num" }, rTxt(h.total_r)), el("td", {}, r.status === "running" ? r.progress || "running" : r.status),
+      el("td", {}, r.status === "running" ? "" : el("button", { class: "btn", onclick: (e) => { e.stopPropagation(); removeRun(r.id); } }, "Delete"))));
+    if (r.status === "running" && running == null && pollTimer == null) poll(r.id);      // a run still going when the page opened
+  }
+}
+async function removeRun(id) {
+  if (!confirm(`Delete run #${id} and its trades?`)) return;
+  try { await api(`/api/backtest/${id}`, { method: "DELETE" }); if (shownRun === id) { shownRun = null; $("p-result").hidden = true; } await loadRuns(); }
+  catch (e) { say(`Could not delete it. ${e.message}`, true); }
+}
+$("p-delete").onclick = () => shownRun && removeRun(shownRun);
+$("p-cancel").onclick = async () => {
+  if (running == null) return;
+  try { await post(`/api/backtest/${running}/cancel`, {}); say(`Cancelling run #${running}…`); } catch (e) { say(`Could not cancel. ${e.message}`, true); }
+};
+
 $("s-run").onclick = async () => {
   const symbols = boxes().filter((b) => b.checked).map((b) => b.value);
   if (!symbols.length) return say("Tick at least one coin.", true);
   if (!$("s-date").value) return say("Choose the scan date.", true);
+  if (kind() === "period") {
+    try { $("s-run").disabled = true; say(`Starting the run for ${symbols.length} ${symbols.length === 1 ? "coin" : "coins"} from ${$("s-date").value} to today`); await runPeriod(symbols); }
+    catch (e) { say(`Could not start the run. ${e.message}`, true); $("s-run").disabled = false; }
+    return;
+  }
   try {
+    $("p-result").hidden = true;
     say(`Checking ${symbols.length} ${symbols.length === 1 ? "coin" : "coins"}`); $("s-run").disabled = true;
     const out = await post("/api/scancheck", { symbols, mode: $("s-mode").value, scan_date: $("s-date").value, save: true,
       fee_maker_pct: Number($("s-maker").value), fee_taker_pct: Number($("s-taker").value), fee_bnb: $("s-bnb").checked, include_funding: $("s-funding").checked });
@@ -151,8 +262,10 @@ $("s-run").onclick = async () => {
     $("s-maker").value = s.fee_maker_pct; $("s-taker").value = s.fee_taker_pct; $("s-bnb").checked = Boolean(s.fee_bnb); $("s-funding").checked = s.include_funding !== false;
     box.onchange = syncAll; syncAll();
     for (const m of Object.keys(MODES)) $("s-mode").append(el("option", { value: m }, modeText(m)));
-    $("s-mode").value = "MONTHLY";
+    $("s-mode").value = "4HR";
     $("s-date").value = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+    labelRun();
     await loadPast();
+    await loadRuns();
   } catch (e) { say(`Could not load the page. ${e.message}`, true); }
 })();

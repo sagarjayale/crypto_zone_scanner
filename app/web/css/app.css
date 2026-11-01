@@ -14,7 +14,7 @@ button, select, input { font: inherit; color: inherit; }
 
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .brand { font-weight: 600; font-size: 15px; letter-spacing: .01em; }
-.nav { display: flex; gap: 4px; }
+.nav { display: flex; flex-wrap: wrap; gap: 4px; }
 .nav a { padding: 6px 12px; border-radius: 6px; text-decoration: none; color: var(--muted); }
 .nav a[aria-current="page"] { background: var(--raised); color: var(--text); }
 .spacer { flex: 1; }
@@ -253,3 +253,38 @@ td.times { white-space: normal; min-width: 12em; max-width: 15em; }
 @media (max-width: 900px) { .tc-body { grid-template-columns: 1fr; } }
 /* dashboard: the other qualifying LTF zones of a coin, under its row */
 #rows tr.other-zone td { background: var(--panel); border-top: 0; font-size: 13px; }
+
+/* GTF EYE and Premium pages */
+.page .eye-title { text-align: center; font-size: 28px; margin: 8px 0 22px; }
+.page .premium-title { text-align: left; }
+.premium-title span { color: var(--brass); }
+.eye-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px 28px; margin-bottom: 22px; }
+.eye-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.eye-cap { color: var(--muted); font-size: 13px; }
+.toggle { display: grid; grid-template-columns: 1fr 1fr; width: 100%; max-width: 420px; padding: 4px; gap: 4px; border: 1px solid var(--text); border-radius: 8px; }
+.toggle button { background: transparent; border: 0; border-radius: 5px; padding: 9px 8px; min-height: 40px; cursor: pointer; font-weight: 600; color: var(--text); }
+.toggle button[aria-pressed="true"] { background: var(--brass); color: #1a1505; }
+.eye-tfs { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 0 0 16px; }
+.eye-tfs button { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 8px 18px; min-height: 38px; cursor: pointer; font-weight: 600; }
+.eye-tfs button[aria-pressed="true"] { background: var(--demand); border-color: var(--demand); color: #fff; }
+.eye-more { justify-content: center; }
+.eye-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin: 8px 0 16px; }
+.eye-card { display: flex; flex-direction: column; gap: 3px; padding: 14px 14px 12px; border: 1px solid var(--text); border-radius: 8px; text-decoration: none;
+  background: linear-gradient(135deg, var(--raised), var(--panel)); min-height: 120px; }
+.eye-card:hover { border-color: var(--brass); }
+.eye-card.demand { border-left: 4px solid var(--demand); }
+.eye-card.supply { border-left: 4px solid var(--supply); }
+.eye-name { font-size: 18px; font-weight: 600; }
+.eye-price { font-size: 15px; }
+.eye-extra { color: var(--brass); font-size: 13px; }
+.eye-zone, .eye-score { color: var(--muted); font-size: 12px; }
+.eye-help { max-width: 900px; }
+.premium { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 24px; align-items: start; }
+.premium-list { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--text); border-radius: 10px; }
+.premium-list button { text-align: left; background: transparent; border: 0; border-radius: 6px; padding: 14px 16px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; }
+.premium-list button[aria-selected="true"] { background: var(--brass); color: #1a1505; }
+@media (max-width: 720px) {
+  .premium { grid-template-columns: 1fr; }
+  .eye-cards { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .eye-tfs button { padding: 8px 12px; }
+}

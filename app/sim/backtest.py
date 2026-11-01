@@ -26,14 +26,16 @@ CANCEL: set[int] = set()
 ENTRY_PLANS = ("rule", "type1", "type2", "type3")
 
 
-def run_one(db: Session, key: str, mode: str, start: datetime, end: datetime, opts: dict, cancelled=lambda: False) -> list[dict]:
+def run_one(db: Session, key: str, mode: str, start: datetime, end: datetime, opts: dict, cancelled=lambda: False,
+            stats: dict | None = None) -> list[dict]:
     """Backtest one instrument in one analysis mode. Returns trades as dicts.
 
     type1: a limit at the proximal line of a zone whose trade score is 7 or more; filled when price comes back to it.
     type2: for a score of 5 to 6.5: a candle closes inside the zone and the next opens inside it; entry at that open.
     type3: for a score of 5 to 6.5: a candle closes inside the zone and the next closes back out; entry at that close.
     rule:  type 1 for 7 or more, and for 5 to 6.5 the one of types 2 and 3 chosen in the settings.
-    A zone is scored at the close of the candle before the one that enters, so nothing looks ahead."""
+    A zone is scored at the close of the candle before the one that enters, so nothing looks ahead.
+    stats, when given, receives "setups" (zones that qualified for an order in the period) and "filled" (those entered)."""
     htf, itf, ltf = MODES[mode]
     th = settings_store.thresholds(db, ltf)
     min_score = float(opts["min_score"]) if opts.get("min_score") is not None else float(th["min_score"])
@@ -86,6 +88,7 @@ def run_one(db: Session, key: str, mode: str, start: datetime, end: datetime, op
     open_trades: list[dict] = []
     done: list[dict] = []
     traded: set[int] = set()
+    setups: set[int] = set()             # zones that qualified for an order in the period (filled or not)
 
     def finish(tr: dict, ts: datetime, price: float, result: str):
         best = tr.pop("best")
@@ -278,22 +281,31 @@ def run_one(db: Session, key: str, mode: str, start: datetime, end: datetime, op
                     sign = 1 if z.side == "demand" else -1
                     pending[z.id] = {**trade(z, total, label, ctx, z.proximal, z.distal, z.proximal + sign * rr * abs(z.proximal - z.distal), "TYPE_1", None),
                                      "_q": (z, ctx, i)}       # the zone as it qualified, for its facts once filled
+                    setups.add(z.id)
             elif "TYPE_2" in want or "TYPE_3" in want:
                 scored[z.id] = (total, label, ctx)
+                setups.add(z.id)
+    if stats is not None:
+        stats["setups"] = stats.get("setups", 0) + len(setups)
+        stats["filled"] = stats.get("filled", 0) + len(traded & setups)
     for tr in open_trades:   # still open at the end of the data: valued at the last close, kept out of the statistics
         finish(tr, eng.ts[-1], float(eng.c[-1]), "open")
     return done
 
 
-def summarize(trades: list[dict]) -> dict:
+def summarize(trades: list[dict], start: datetime | None = None, end: datetime | None = None, counts: dict | None = None) -> dict:
+    """Totals of a run. With start and end the trades are also split into the two halves of the period (by entry time),
+    to see whether a result holds in both; counts carries the setups found and filled (orders never filled = the rest)."""
     closed = sorted((t for t in trades if t["result"] in ("win", "loss")), key=lambda t: (t["exit_ts"], t["entry_ts"]))
 
     def stats(rows: list[dict]) -> dict:
         if not rows:
-            return {"trades": 0, "win_rate": None, "expectancy": None}
+            return {"trades": 0, "win_rate": None, "expectancy": None, "stop_rate": None, "total_r": 0.0}
         wins = [t for t in rows if t["result"] == "win"]
         return {"trades": len(rows), "win_rate": round(100 * len(wins) / len(rows), 1),
-                "expectancy": round(sum(t["result_r"] for t in rows) / len(rows), 3)}
+                "expectancy": round(sum(t["result_r"] for t in rows) / len(rows), 3),
+                "stop_rate": round(100 * (len(rows) - len(wins)) / len(rows), 1),
+                "total_r": round(sum(t["result_r"] for t in rows), 3)}
 
     def by(field: str) -> dict:
         keys = sorted({t.get(field) for t in closed if t.get(field) is not None}, key=str)
@@ -316,8 +328,23 @@ def summarize(trades: list[dict]) -> dict:
                reached={str(n): sum(1 for t in closed if (t.get("mfe_r") or 0) >= n) for n in (1, 2, 3, 5, 10)},
                best_trade_r=max((t["result_r"] for t in closed), default=None),
                worst_trade_r=min((t["result_r"] for t in closed), default=None),
-               by_score=by("score"), by_label=by("label"), by_mode=by("mode"), by_curve=by("curve"), by_timeframe=by("timeframe"))
+               by_score=by("score"), by_label=by("label"), by_mode=by("mode"), by_curve=by("curve"), by_timeframe=by("timeframe"),
+               by_side=by("side"), stop_rate=out["stop_rate"])
+    if start is not None and end is not None:
+        mid = start + (end - start) / 2
+        out["halves"] = {"mid": mid.isoformat(), "first": stats([t for t in closed if t["entry_ts"] < mid]),
+                         "second": stats([t for t in closed if t["entry_ts"] >= mid])}
+    if counts is not None:
+        setups, filled = int(counts.get("setups", 0)), int(counts.get("filled", 0))
+        out["orders"] = {"setups": setups, "filled": filled, "never_filled": max(0, setups - filled)}
     return out
+
+
+def _one(key: str, mode: str, start: datetime, end: datetime, opts: dict) -> tuple[list[dict], dict]:
+    """One coin in one mode, with its own database session: what a worker process runs."""
+    stats: dict = {}
+    with SessionLocal() as db:
+        return run_one(db, key, mode, start, end, opts, stats=stats), stats
 
 
 def execute(run_id: int) -> None:
@@ -329,20 +356,46 @@ def execute(run_id: int) -> None:
         end = datetime.combine(date.fromisoformat(s["end"]), time.max).replace(microsecond=0)
         jobs = [(k, m) for k in s["symbols"] for m in s["modes"]]
         trades: list[dict] = []
+        counts: dict = {"setups": 0, "filled": 0}
+        from ..jobs.scanpool import workers
+        done_jobs: set = set()
         try:
-            for n, (key, mode) in enumerate(jobs, 1):
+            if workers() > 0 and len(jobs) > 1:
+                # Several coins at once in worker processes, each on its own CPU core (MySQL). Progress counts finished coins.
+                # If the workers stop (out of memory, killed), the coins not finished yet are run here, one after another.
+                import multiprocessing
+                from concurrent.futures import ProcessPoolExecutor, as_completed
+                from concurrent.futures.process import BrokenProcessPool
+                try:
+                    with ProcessPoolExecutor(max_workers=workers(), mp_context=multiprocessing.get_context("spawn")) as ex:
+                        futures = {ex.submit(_one, k, m, start, end, s): (k, m) for k, m in jobs}
+                        for fut in as_completed(futures):
+                            if run_id in CANCEL:
+                                ex.shutdown(wait=False, cancel_futures=True)
+                                break
+                            got, st = fut.result()
+                            trades += got
+                            for c_key in counts:
+                                counts[c_key] += st.get(c_key, 0)
+                            done_jobs.add(futures[fut])
+                            k, m = futures[fut]
+                            run.progress = f"{len(done_jobs)} of {len(jobs)} done (last: {k} {m})"
+                            db.commit()
+                except BrokenProcessPool:
+                    pass
+            for n, (key, mode) in enumerate([j for j in jobs if j not in done_jobs], len(done_jobs) + 1):
                 if run_id in CANCEL:
                     break
                 run.progress = f"{n} of {len(jobs)}: {key} {mode}"
                 db.commit()
-                trades += run_one(db, key, mode, start, end, s, cancelled=lambda: run_id in CANCEL)
+                trades += run_one(db, key, mode, start, end, s, cancelled=lambda: run_id in CANCEL, stats=counts)
             if run_id in CANCEL:
                 run.status = "cancelled"
             else:
                 db.execute(delete(BacktestTrade).where(BacktestTrade.run_id == run_id))
                 for t in trades:
                     db.add(BacktestTrade(run_id=run_id, **{k: v for k, v in t.items() if k != "risk"}))
-                run.summary, run.status, run.progress = summarize(trades), "done", f"{len(trades)} trades"
+                run.summary, run.status, run.progress = summarize(trades, start, end, counts), "done", f"{len(trades)} trades"
         except Exception as exc:  # shown on the page
             db.rollback()
             run = db.get(BacktestRun, run_id)

@@ -32,7 +32,7 @@ def test_summary_metrics():
     s = summarize([t(1, "win", 3.0), t(3, "loss", -1.0), t(5, "loss", -1.0, 7), t(7, "win", 2.0, 7), t(9, "open", 0.4)])
     assert (s["trades"], s["win_rate"], s["expectancy"], s["total_r"]) == (4, 50.0, 0.75, 3.0)
     assert (s["profit_factor"], s["max_drawdown_r"], s["longest_losing_streak"], s["open_trades"]) == (2.5, 2.0, 2, 1)
-    assert s["by_score"]["7"] == {"trades": 2, "win_rate": 50.0, "expectancy": 0.5}
+    assert s["by_score"]["7"] == {"trades": 2, "win_rate": 50.0, "expectancy": 0.5, "stop_rate": 50.0, "total_r": 1.0}
     assert [p[1] for p in s["equity"]] == [3.0, 2.0, 1.0, 3.0]
     assert (s["best_trade_r"], s["worst_trade_r"]) == (3.0, -1.0)
     assert summarize([])["trades"] == 0

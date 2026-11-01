@@ -22,6 +22,7 @@ from .data import market
 from .data import sync as data_sync
 from .db import SessionLocal, engine, ensure_database, ensure_schema, get_db
 from .engine import plan as plans
+from .engine import eye
 from .engine import result as results
 from .jobs import scanpool
 from .jobs import scheduler as jobs
@@ -208,6 +209,16 @@ def backtest_page():
 @app.get("/data", include_in_schema=False)
 def data_page():
     return FileResponse(WEB / "data.html")
+
+
+@app.get("/eye", include_in_schema=False)
+def eye_page():
+    return FileResponse(WEB / "eye.html")
+
+
+@app.get("/premium", include_in_schema=False)
+def premium_page():
+    return FileResponse(WEB / "premium.html")
 
 
 def row(obj) -> dict:
@@ -752,8 +763,13 @@ async def backtest_run(symbols: list[str] | str = Body("all"), modes: list[str] 
         raise HTTPException(400, "The end date is before the start date.")
     have = {(k, tf) for k, tf in db.execute(select(Candle.instrument_key, Candle.timeframe).distinct())}
     missing = sorted({f"{k} {tf}" for k in keys for m in modes for tf in config.MODES[m] if (k, tf) not in have})
-    if missing:
+    if missing and len(keys) == 1:
         raise HTTPException(400, "No candles stored for: " + ", ".join(missing[:8]) + ". Sync them from the Data page first.")
+    # With several coins, a coin that lacks one of the mode's timeframes (a new listing) is left out instead of the whole run.
+    skipped = sorted({k for k in keys for m in modes for tf in config.MODES[m] if (k, tf) not in have})
+    keys = [k for k in keys if k not in skipped]
+    if not keys:
+        raise HTTPException(400, "No coin has candles for every timeframe of this mode. Sync them from the Data page first.")
     run = BacktestRun(status="running", created_at=data_sync.now_utc(), progress="starting",
                       settings={"symbols": keys, "modes": modes, "start": str(start), "end": str(end),
                                 "min_score": min_score if min_score is not None else settings_store.get(db, "min_score"),
@@ -766,7 +782,28 @@ async def backtest_run(symbols: list[str] | str = Body("all"), modes: list[str] 
     db.add(run)
     db.commit()
     asyncio.get_running_loop().create_task(asyncio.to_thread(bt.execute, run.id))
-    return {"run_id": run.id}
+    note = _history_warning(db, keys, modes, start)
+    if skipped:
+        note = " ".join(filter(None, [f"Left out (missing candles for this mode): {', '.join(skipped[:10])}{' …' if len(skipped) > 10 else ''}.", note]))
+    return {"run_id": run.id, "warning": note}
+
+
+def _history_warning(db: Session, keys: list[str], modes: list[str], start: date) -> str | None:
+    """A note when some coins' entry-timeframe candles begin less than a week before the start: their zones and EMAs
+    have little history at first, so their trades only count once it has built up. None when every coin is fine."""
+    from collections import Counter
+    from .models import SyncState
+    begin, notes = datetime.combine(start, datetime.min.time()), []
+    for m in modes:
+        ltf = config.MODES[m][2]
+        firsts = dict(db.execute(select(SyncState.instrument_key, SyncState.first_candle_ts).where(
+            SyncState.timeframe == ltf, SyncState.instrument_key.in_(keys))).all())
+        late = [firsts[k] for k in keys if firsts.get(k) is not None and firsts[k] > begin - timedelta(days=7)]
+        if late:
+            common = Counter(d.date() for d in late).most_common(1)[0][0]
+            notes.append(f"{len(late)} of {len(keys)} coins have {ltf} candles only from about {common} or later "
+                         f"(mode {m}): pick {common + timedelta(days=7)} or later for a full first week.")
+    return " ".join(notes) or None
 
 
 def _check_trailing(values: dict) -> None:
@@ -808,7 +845,8 @@ def _run_head(r: BacktestRun) -> dict:
     s = r.summary or {}
     return {"id": r.id, "status": r.status, "progress": r.progress, "error": r.error, "created_at": r.created_at,
             "ended_at": r.ended_at, "settings": r.settings,
-            "headline": {k: s.get(k) for k in ("trades", "win_rate", "expectancy", "profit_factor", "max_drawdown_r", "total_r")}}
+            "headline": {k: s.get(k) for k in ("trades", "win_rate", "expectancy", "profit_factor", "max_drawdown_r", "total_r",
+                                               "stop_rate", "open_trades", "orders")}}
 
 
 @app.get("/api/backtest/runs", tags=["backtest"])
@@ -824,6 +862,20 @@ def backtest_get(run_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "No such backtest run")
     trades = db.scalars(select(BacktestTrade).where(BacktestTrade.run_id == run_id).order_by(BacktestTrade.entry_ts)).all()
     return {**_run_head(r), "summary": r.summary, "trades": [row(t) for t in trades]}
+
+
+@app.delete("/api/backtest/{run_id}", tags=["backtest"])
+def backtest_delete(run_id: int, db: Session = Depends(get_db)):
+    """Delete a finished backtest run and its trades (a running one is cancelled first from the page)."""
+    r = db.get(BacktestRun, run_id)
+    if not r or _is_scan(r):
+        raise HTTPException(404, "No such backtest run")
+    if r.status == "running":
+        raise HTTPException(400, "This run is still going. Cancel it first.")
+    db.execute(delete(BacktestTrade).where(BacktestTrade.run_id == run_id))
+    db.delete(r)
+    db.commit()
+    return {"deleted": run_id}
 
 
 @app.post("/api/backtest/{run_id}/cancel", tags=["backtest"])
@@ -1129,6 +1181,22 @@ def results_list(mode: str = "MONTHLY", db: Session = Depends(get_db)):
             "pending": [{"instrument_key": k, "symbol": k, **state[k]} for k in keys if not state[k]["ready"]],
             "busy": [k for k in ready if state[k]["state"] in ("downloading", "scanning")],
             "rows": [_result_row(db, k, mode, names, saved=saved.get(k)) for k in ready]}
+
+
+@app.get("/api/eye", tags=["scan"])
+def eye_list(mode: str = "DAILY", db: Session = Depends(get_db)):
+    """GTF EYE and Premium pages: for every coin of the list, where the price stands against its nearest HTF demand and
+    supply zones of the mode (in the zone, reacting from it, approaching it), its daily ATR % and the saved GTF signal.
+    Filtering (criteria, side, standard or GTF, score, coins) is done on the page, so a click never waits for the server."""
+    mode = mode.upper()
+    if mode not in config.MODES:
+        raise HTTPException(400, f"mode must be one of {list(config.MODES)}")
+    keys = universe(db)
+    approach = float(settings_store.get(db, "approach_pct") or 1.0)
+    th = settings_store.thresholds(db, config.MODES[mode][0])
+    return {"mode": mode, "frames": list(config.MODES[mode]), "approach_pct": approach, "react_candles": eye.REACT_CANDLES,
+            "react_max_r": eye.REACT_MAX_R, "max_tests": int(th["max_wick_tests"]),
+            "ranked": ranked(db, keys), "rows": eye.scan(db, keys, mode, live.state["prices"], approach, th)}
 
 
 @app.get("/api/result/{symbol:path}", tags=["scan"])

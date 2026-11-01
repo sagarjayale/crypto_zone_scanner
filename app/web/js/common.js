@@ -105,7 +105,7 @@ async function showToken(badge) {
 (async function loadTz() { try { const s = await api("/api/settings"); setDisplayTz(s.display_tz); } catch (e) { /* the stored choice stays */ } })();
 
 // One navigation for every page.
-const PAGES = [["scanner", "Dashboard"], ["chart", "Chart"], ["paper", "Paper"], ["backtest", "Backtest"], ["data", "Data"], ["settings", "Settings"]];
+const PAGES = [["scanner", "Dashboard"], ["eye", "GTF EYE"], ["premium", "Premium"], ["chart", "Chart"], ["paper", "Paper"], ["backtest", "Backtest"], ["data", "Data"], ["settings", "Settings"]];
 (function buildNav() {
   const nav = document.getElementById("nav");
   if (!nav) return;
