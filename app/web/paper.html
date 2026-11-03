@@ -34,7 +34,9 @@
   <h2>Open positions</h2>
   <div class="table-wrap"><table><thead><tr><th>Coin</th><th>Side</th><th>Quantity</th><th>Entry time</th><th>Entry price</th><th>Open for</th><th>Leverage, margin, liquidation</th><th>Stop</th><th>Target</th><th>Trailing / locked</th><th>Price</th><th>Profit or loss (USDT)</th><th></th></tr></thead><tbody id="open"></tbody></table></div>
   <h2>Pending orders</h2>
-  <div class="table-wrap"><table class="board"><thead><tr><th>Coin</th><th>Timeframe</th><th>Side</th><th>Quantity</th><th>Entry type</th><th>Entry</th><th>Stop</th><th>Target</th><th>Leverage</th><th>Price</th><th>Placed at</th><th>Signal time</th><th></th></tr></thead><tbody id="pending"></tbody></table></div>
+  <div class="near-chips" id="near-chips" role="group" aria-label="Show orders by distance to entry"></div>
+  <p class="sub near-help">Distance from the live price to the entry, in R (entry to stop): entering now under 0.25 R, close up to 1 R, between 1 to 3 R, far over 3 R. The arrow and time compare with the prices of the last 5 minutes in this page, a rough guess that changes with every move.</p>
+  <div class="table-wrap"><table class="board"><thead><tr><th>Coin</th><th>Distance to entry</th><th>Timeframe</th><th>Side</th><th>Quantity</th><th>Entry type</th><th>Entry</th><th>Stop</th><th>Target</th><th>Leverage</th><th>Price</th><th>Placed at</th><th>Signal time</th><th></th></tr></thead><tbody id="pending"></tbody></table></div>
   <h2>Closed trades</h2>
   <div class="actions"><a class="btn" id="export" href="/api/paper/export" download>Export CSV</a><span class="sub">Times in the file are UTC.</span></div>
   <div class="table-wrap"><table><thead><tr><th>Coin</th><th>Side</th><th>Quantity</th><th>Entry time</th><th>Exit time</th><th>Duration</th><th>Entry</th><th>Exit</th><th>Why</th><th>Fees</th><th>Funding</th><th>Profit or loss (USDT)</th><th>Result</th><th></th></tr></thead><tbody id="closed"></tbody></table></div>

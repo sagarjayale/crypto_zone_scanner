@@ -17,24 +17,115 @@ function renderFigures() {
   for (const [k, v] of rows) fig.append(el("div", {}, el("dt", {}, k), el("dd", {}, String(v))));
 }
 
-// The "Trailing / locked" column: what the position keeps if price comes back to the stop now, and for the lock method
-// the price that locks the next step and the target now. The numbers come from the server (lock in /api/paper/positions).
-function lockCell(t) {
+// The "Trailing / locked" column: a step ladder from the entry to the target. Locked steps are filled, a dot marks the
+// live price, and the next step says which price locks it and how far that is. After the first target the ladder keeps
+// growing when the target moves forward ("move"). The step numbers come from the server (lock in /api/paper/positions).
+const pctAway = (from, to) => (from ? Math.abs(to - from) / from * 100 : null);
+function ladderBar(k, sign, p) {
+  const levels = k.levels || [];
+  const top = Math.max(...[...levels, k.target ?? k.first_target].map((x) => (x - k.entry) * sign));
+  const pos = (x) => Math.max(0, Math.min(1, ((x - k.entry) * sign) / (top || 1))) * 100;
+  const bar = el("div", { class: "ladder", role: "img", "aria-label": `${k.steps} of ${k.steps_to_target} steps locked` });
+  bar.append(el("div", { class: "ladder-fill", style: `width:${k.steps ? pos(k.stop) : 0}%` }));
+  levels.forEach((x, i) => {
+    const n = i + 1, cls = n <= k.steps ? "done" : n === k.steps + 1 ? "next" : "";
+    bar.append(el("span", { class: `ladder-tick ${cls}${n === k.steps_to_target ? " goal" : ""}`, style: `left:${pos(x)}%`, title: `step ${n}: stop ${fmtPrice(x)}` }));
+  });
+  if (p != null) bar.append(el("span", { class: "ladder-dot" + ((p - k.entry) * sign < 0 ? " under" : ""), style: `left:${pos(p)}%`, title: `price ${fmtPrice(p)}` }));
+  const ends = el("div", { class: "ladder-ends" }, el("span", {}, fmtPrice(k.entry)), el("span", {}, `🎯 ${fmtPrice(k.target ?? k.first_target)}`));
+  return [bar, ends];
+}
+function lockCell(t, p) {
   const k = t.lock;
   if (!k) return el("td", {}, "");
+  const sign = t.side === "demand" ? 1 : -1;
   const lines = [];
-  if (k.is_locked) lines.push(el("span", { class: "win" }, `Locked ${signed(k.locked_usdt)} (${k.locked_r > 0 ? "+" : ""}${k.locked_r} R)`),
-    el("span", { class: "sub" }, `after fees about ${signed(k.locked_after_fees)}`));
-  else lines.push(el("span", {}, k.method === "off" ? "Off: fixed stop and target" : "Not locked yet"),
-    el("span", { class: "sub" }, `risk ${signed(k.locked_usdt)} at ${fmtPrice(k.stop)}`));
-  if (k.method === "lock" && k.next_trigger != null) {
-    if (k.steps) lines.push(el("span", { class: "sub" }, `stop ${fmtPrice(k.stop)} (${k.steps} step${k.steps > 1 ? "s" : ""}, ${k.pct_locked}% of target)`));
-    lines.push(el("span", { class: "sub" }, `next: at ${fmtPrice(k.next_trigger)} stop → ${fmtPrice(k.next_stop)}`));
-    lines.push(el("span", { class: "sub" }, k.target_moves_on
-      ? `target ${fmtPrice(k.target)}${k.target_moves ? ` (moved ${k.target_moves}×, first ${fmtPrice(k.first_target)})` : ", moves forward when reached"}`
-      : `target ${fmtPrice(k.target)}, closes there`));
-  } else if (k.method !== "off") lines.push(el("span", { class: "sub" }, `trailing: ${k.method}`));
-  return el("td", {}, ...lines);
+  if (k.method !== "lock" || k.next_trigger == null) {
+    if (k.is_locked) lines.push(el("span", { class: "lock-head win" }, `🔒 Locked ${signed(k.locked_usdt)} (${k.locked_r > 0 ? "+" : ""}${k.locked_r} R)`));
+    else lines.push(el("span", { class: "lock-head" }, k.method === "off" ? "Off: fixed stop and target" : "🔓 Not locked yet"));
+    if (k.method !== "off") lines.push(el("span", { class: "sub" }, `trailing: ${k.method}, stop ${fmtPrice(k.stop)}`));
+    return el("td", { class: "lockcell" }, ...lines);
+  }
+  if (k.target_reached && k.target_moves_on) lines.push(el("span", { class: "lock-goal" }, `🎯 First target ${fmtPrice(k.first_target)} reached · running beyond target`));
+  if (k.is_locked) {
+    const n = k.beyond_target ? `Step ${k.steps} (${k.steps - k.steps_to_target} beyond target)` : `Step ${k.steps} of ${k.steps_to_target}`;
+    lines.push(el("span", { class: "lock-head win" }, `🔒 ${n} locked · stop ${fmtPrice(k.stop)}`),
+      el("span", { class: "sub" }, `keeps ${k.locked_r > 0 ? "+" : ""}${k.locked_r} R, ${signed(k.locked_usdt)} USDT (after fees about ${signed(k.locked_after_fees)})`));
+  } else {
+    lines.push(el("span", { class: "lock-head" }, `🔓 Not locked yet · Step 0 of ${k.steps_to_target}`),
+      el("span", { class: "sub" }, `stop ${fmtPrice(k.stop)}: risk ${signed(k.locked_usdt)} USDT`));
+  }
+  lines.push(...ladderBar(k, sign, p));
+  const away = p == null ? null : (k.next_trigger - p) * sign;
+  lines.push(el("span", { class: "lock-next" }, `Next: step ${k.steps + 1} → stop ${fmtPrice(k.next_stop)} when price reaches ${fmtPrice(k.next_trigger)}` +
+    (away == null ? "" : away <= 0 ? " (reached: locks at the next candle close)" : ` (${pctAway(p, k.next_trigger).toFixed(2)}% away)`)));
+  lines.push(el("span", { class: "sub" }, k.target_moves_on
+    ? `Target ${fmtPrice(k.target)}: does not close the trade, moves forward ${fmtPrice(k.step)} each time it is reached${k.target_moves ? ` (moved ${k.target_moves}×)` : ""}. Only the locked stop ends the trade.`
+    : `Target ${fmtPrice(k.target)} closes the trade.`));
+  return el("td", { class: "lockcell" }, ...lines);
+}
+
+// ---- pending orders: how near the entry is, and whether price is coming closer --------------------------------
+// Distance in R (entry to stop), so a calm coin and a fast one are judged alike.
+const NEAR = [["now", 0.25, "Entering now"], ["close", 1, "Close"], ["between", 3, "Between"], ["far", Infinity, "Far"]];
+const NEAR_KEY = "cryptoScanner.paperNear";
+let nearFilter = (() => { try { return localStorage.getItem(NEAR_KEY) || "all"; } catch (e) { return "all"; } })();
+const priceHist = {};                    // coin -> [[seconds, price], ...] for the last 5 minutes (in the page only)
+function remember(update) {
+  const now = Date.now() / 1000;
+  for (const [k, v] of Object.entries(update)) {
+    const h = priceHist[k] || (priceHist[k] = []);
+    h.push([now, Number(v)]);
+    while (h.length && now - h[0][0] > 300) h.shift();
+  }
+}
+function nearness(o) {
+  const p = prices[o.instrument_key] ?? o.price;
+  const risk = Math.abs(o.entry - o.stop);
+  if (p == null || !risk) return { group: "far", r: null, pct: null, p };
+  const sign = o.side === "demand" ? 1 : -1;            // a buy limit waits below the price, a sell limit above it
+  const dist = (p - o.entry) * sign;
+  const r = Math.max(0, dist / risk);
+  const group = (NEAR.find(([, lim]) => r <= lim) || NEAR[3])[0];
+  // direction and speed over the last 5 minutes (at least one minute of prices is needed)
+  const h = priceHist[o.instrument_key] || [];
+  let trend = "measuring", eta = null;
+  if (h.length > 1 && h[h.length - 1][0] - h[0][0] >= 60) {
+    const [t0, p0] = h[0], [t1] = h[h.length - 1];
+    const closer = ((p0 - o.entry) * sign - dist) / risk;           // R gained toward the entry since then
+    if (Math.abs(closer) < 0.05) trend = "flat";
+    else if (closer > 0) { trend = "closer"; const perS = closer / (t1 - t0); eta = perS > 0 ? r / perS : null; }
+    else trend = "away";
+  }
+  return { group, r, pct: Math.abs(p - o.entry) / p * 100, p, trend, eta, through: dist <= 0 };
+}
+// arrows show which way the price moves: a buy limit waits below the price, so "closer" is down; a sell limit, up
+const TREND_TEXT = { closer: "coming closer", away: "moving away", flat: "➖ flat", measuring: "measuring…" };
+function trendText(o, trend) {
+  if (trend === "flat" || trend === "measuring") return TREND_TEXT[trend];
+  const down = (trend === "closer") === (o.side === "demand");
+  return `${down ? "⬇" : "⬆"} ${TREND_TEXT[trend]}`;
+}
+const etaText = (s) => (s == null || !isFinite(s) ? "" : s < 90 ? ", under 2 min at this speed" : `, ~${duration(s)} at this speed`);
+const WAIT_TEXT = { waiting: "Waits for a candle to close inside the zone", testing: "Price is in the zone: waits for a candle to close inside it",
+  armed: "Armed: a candle closed inside the zone, the next candle can enter", unknown: "Zone no longer stored" };
+function nearCell(o, n) {
+  const arrowTxt = trendText(o, n.trend);
+  const label = (NEAR.find(([g]) => g === n.group) || NEAR[3])[2];
+  const kids = [el("span", { class: `near-badge ${n.group}`, style: n.group === "now" ? `animation-delay:-${(Date.now() % 1600) / 1000}s` : "" }, label.toUpperCase())];
+  if (n.r != null) kids.push(el("span", { class: "near-dist" }, n.through ? "price is at the entry" : `${n.r.toFixed(2)} R · ${n.pct.toFixed(2)}% away`));
+  if (n.r != null) kids.push(el("div", { class: "near-bar" }, el("span", { style: `width:${Math.max(4, 100 - Math.min(n.r, 4) / 4 * 100)}%` })));
+  kids.push(el("span", { class: `near-trend ${n.trend}` }, arrowTxt + (n.trend === "closer" ? etaText(n.eta) : "")));
+  if (o.wait && o.wait !== "limit") kids.push(el("span", { class: "sub wrap" + (o.wait === "armed" ? " win" : "") }, WAIT_TEXT[o.wait] || ""));
+  return el("td", { class: "nearcell" }, ...kids);
+}
+function nearChips(list) {
+  const box = $("near-chips");
+  const count = Object.fromEntries(NEAR.map(([g]) => [g, 0]));
+  for (const [, n] of list) count[n.group]++;
+  const chip = (g, text) => el("button", { class: `near-chip ${g}`, "aria-pressed": String(nearFilter === g),
+    onclick: () => { nearFilter = g; try { localStorage.setItem(NEAR_KEY, g); } catch (e) { /* storage not available */ } render(); } }, text);
+  box.replaceChildren(...NEAR.map(([g, , label]) => chip(g, `${{ now: "🔴", close: "🟢", between: "🟡", far: "⚪" }[g]} ${label} ${count[g]}`)), chip("all", `All ${list.length}`));
 }
 
 function render() {
@@ -46,12 +137,14 @@ function render() {
     const stop = el("input", { class: "edit", type: "number", step: "any", value: t.stop, "aria-label": "Stop" });
     const target = el("input", { class: "edit", type: "number", step: "any", value: t.target, "aria-label": "Target" });
     const liqNear = p != null && t.liq_price != null && Math.abs(p - t.liq_price) / p < 0.05;
-    open.append(el("tr", {}, el("td", {}, t.symbol), el("td", {}, sideTag(t)), el("td", { class: "num" }, qty(t.quantity)),
+    const k = t.lock || {}, sgn = t.side === "demand" ? 1 : -1, risk0 = Math.abs(t.fill_price - (k.first_stop ?? t.stop));
+    const nearStop = p != null && risk0 > 0 && (p - t.stop) * sgn <= 0.3 * risk0;
+    open.append(el("tr", { class: nearStop ? "near-stop" : k.is_locked ? "is-locked" : "" }, el("td", {}, t.symbol, nearStop ? el("span", { class: "sub loss" }, "near the stop") : ""), el("td", {}, sideTag(t)), el("td", { class: "num" }, qty(t.quantity)),
       el("td", {}, stamp(t.fill_ts), el("span", { class: "sub" }, [ENTRY_TEXT[t.entry_type] || "", t.signal_ts ? `signal ${stamp(t.signal_ts)}` : ""].filter(Boolean).join(", "))),
       el("td", { class: "num" }, fmtPrice(t.fill_price)),
       el("td", {}, since(t.fill_ts)),
       el("td", { class: "num" }, `${t.leverage ?? ""}x, ${money(t.margin)} USDT`, el("span", { class: "sub" + (liqNear ? " loss" : "") }, `liquidation about ${fmtPrice(t.liq_price)}`)),
-      el("td", {}, stop), el("td", {}, target), lockCell(t), el("td", { class: "num" }, p == null ? "no live price" : fmtPrice(p)),
+      el("td", {}, stop), el("td", {}, target), lockCell(t, p), el("td", { class: "num" }, p == null ? "no live price" : fmtPrice(p)),
       el("td", { class: "num " + (pnl > 0 ? "win" : pnl < 0 ? "loss" : "") }, pnl == null ? "" : signed(pnl)),
       el("td", {}, el("div", { class: "rowbtns" },
         el("button", { class: "btn", onclick: () => showChart("trade", t.id) }, "Chart"),
@@ -59,10 +152,14 @@ function render() {
         el("button", { class: "btn", onclick: () => act(`${t.symbol} closed.`, () => post(`/api/paper/positions/${t.id}/close`)) }, "Close now")))));
   }
   const pend = $("pending"); pend.replaceChildren();
-  if (!data.pending.length) pend.append(el("tr", {}, el("td", { colspan: "13" }, "No pending orders. Use Paper trade on a setup in the scanner, or switch on automatic orders above.")));
-  for (const o of data.pending) {
-    const p = prices[o.instrument_key] ?? o.price;
-    pend.append(el("tr", {}, el("td", {}, o.symbol), el("td", {}, TF_LABEL[o.timeframe] || ""), el("td", {}, sideTag(o)), el("td", { class: "num" }, qty(o.quantity)),
+  const ranked = data.pending.map((o) => [o, nearness(o)]).sort((a, b) => (a[1].r ?? 1e9) - (b[1].r ?? 1e9));
+  nearChips(ranked);
+  const shownPending = ranked.filter(([, n]) => nearFilter === "all" || n.group === nearFilter);
+  if (!data.pending.length) pend.append(el("tr", {}, el("td", { colspan: "14" }, "No pending orders. Use Paper trade on a setup in the scanner, or switch on automatic orders above.")));
+  else if (!shownPending.length) pend.append(el("tr", {}, el("td", { colspan: "14" }, "No order in this group right now.")));
+  for (const [o, n] of shownPending) {
+    const p = n.p;
+    pend.append(el("tr", { class: `near-row ${n.group}` }, el("td", {}, o.symbol), nearCell(o, n), el("td", {}, TF_LABEL[o.timeframe] || ""), el("td", {}, sideTag(o)), el("td", { class: "num" }, qty(o.quantity)),
       el("td", {}, ENTRY_TEXT[o.entry_type] || "Entry type 1", el("span", { class: "sub wrap" }, o.entry_type === "TYPE_2" || o.entry_type === "TYPE_3" ? `waits until ${ENTRY_HOW[o.entry_type]}` : "limit at the proximal line")),
       el("td", { class: "num" }, fmtPrice(o.entry), el("span", { class: "sub" }, o.entry_type === "TYPE_2" || o.entry_type === "TYPE_3" ? "proximal line, until the entry" : "")),
       el("td", { class: "num" }, fmtPrice(o.stop)), el("td", { class: "num" }, fmtPrice(o.target)),
@@ -172,7 +269,7 @@ $("reset").onclick = () => { if (confirm("Archive every paper order and trade an
 
 function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`);
-  ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.type === "prices") { Object.assign(prices, m.data); if (summary) render(); if (panel.kind && panel.status !== "closed" && !$("tc").hidden && prices[panel.key] != null) TradeChart.setLive(prices[panel.key]); } else if (m.type === "paper" || m.type === "scan") load().catch(() => {}); };
+  ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.type === "prices") { Object.assign(prices, m.data); remember(m.data); if (summary) render(); if (panel.kind && panel.status !== "closed" && !$("tc").hidden && prices[panel.key] != null) TradeChart.setLive(prices[panel.key]); } else if (m.type === "paper" || m.type === "scan") load().catch(() => {}); };
   ws.onclose = () => setTimeout(connect, 3000);
 }
 showToken($("token"));

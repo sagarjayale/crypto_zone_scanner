@@ -35,7 +35,9 @@ def upsert_statement(dialect: str, model, keys: tuple[str, ...], values: list[st
     """One INSERT ... ON DUPLICATE KEY UPDATE (MySQL) or ON CONFLICT DO UPDATE (SQLite, PostgreSQL) per table, built once
     and run with many rows at a time: the database driver sends the rows in batches and the statement is never compiled
     again (compiling a statement with thousands of values in it was the costliest step of a download)."""
-    key = (dialect, model.__tablename__)
+    # one statement per table AND set of columns: a batch without a column (old funding records have no mark price)
+    # must not reuse a statement that updates that column, or MySQL refuses it ("Unknown column 'new.mark'")
+    key = (dialect, model.__tablename__, tuple(keys), tuple(values))
     if key not in _UPSERT_CACHE:
         if dialect == "mysql":
             from sqlalchemy.dialects.mysql import insert

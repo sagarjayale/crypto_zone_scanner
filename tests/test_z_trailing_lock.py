@@ -154,3 +154,31 @@ def test_the_locked_column_of_an_open_position():
     assert k["locked_usdt"] == 40 and k["steps"] == 2 and k["next_trigger"] == pytest.approx(68)
     off = SimpleNamespace(side="demand", fill_price=100.0, stop=90.0, target=120.0, quantity=1.0, fees=0.0, trail=None)
     assert paper.lock_view(off, NO_FEES)["method"] == "off" and "next_trigger" not in paper.lock_view(off, NO_FEES)
+
+
+def test_lock_view_ladder_steps_and_beyond_the_target():
+    from types import SimpleNamespace
+    st = {**trailing.options({"trail_method": "lock", "trail_lock_pct": 25, "trail_lock_gap_pct": 20}),
+          "first_stop": 95.0, "first_target": 140.0, "target_moves": 0}
+    t = SimpleNamespace(side="demand", fill_price=100.0, stop=95.0, target=140.0, quantity=1.0, fees=0.0, trail=st)
+    k = paper.lock_view(t, NO_FEES)
+    assert k["steps_to_target"] == 4 and k["levels"] == [pytest.approx(x) for x in (110, 120, 130, 140)]
+    assert not k["target_reached"] and not k["beyond_target"] and k["next_trigger"] == pytest.approx(112)
+    t.stop, t.target, st["target_moves"] = 150.0, 160.0, 2          # first target passed: target moved twice, stop at 150
+    k = paper.lock_view(t, NO_FEES)
+    assert k["steps"] == 5 and k["target_reached"] and k["beyond_target"] and len(k["levels"]) == 6
+    assert (k["next_stop"], k["next_trigger"]) == (pytest.approx(160), pytest.approx(162))
+
+
+def test_pending_orders_carry_their_wait_status():
+    from types import SimpleNamespace
+    assert paper.order_wait(None, SimpleNamespace(entry_type="TYPE_1", zone_id=1)) == {"wait": "limit"}
+
+    class DB:
+        def __init__(self, z): self.z = z
+        def get(self, _model, _id): return self.z
+    armed = SimpleNamespace(inside_armed=True, inside_ts=None, in_visit=True)
+    assert paper.order_wait(DB(armed), SimpleNamespace(entry_type="TYPE_2", zone_id=5))["wait"] == "armed"
+    away = SimpleNamespace(inside_armed=False, inside_ts=None, in_visit=False)
+    assert paper.order_wait(DB(away), SimpleNamespace(entry_type="TYPE_3", zone_id=5))["wait"] == "waiting"
+    assert paper.order_wait(DB(None), SimpleNamespace(entry_type="TYPE_3", zone_id=5))["wait"] == "unknown"

@@ -1037,7 +1037,8 @@ async def paper_enter(order_id: int, allow_low_rr: bool = Body(False, embed=True
 
 @app.get("/api/paper/positions", tags=["paper"])
 def paper_positions(db: Session = Depends(get_db)):
-    pending = [{**row(o), "symbol": o.instrument_key, "price": live.state["prices"].get(o.instrument_key)} for o in paper.live_orders(db)]
+    pending = [{**row(o), "symbol": o.instrument_key, "price": live.state["prices"].get(o.instrument_key), **paper.order_wait(db, o)}
+               for o in paper.live_orders(db)]
     closed = db.scalars(select(PaperTrade).where(PaperTrade.exit_ts.isnot(None), PaperTrade.archived.isnot(True))
                         .order_by(PaperTrade.exit_ts.desc()).limit(200)).all()
     return {"pending": pending, "open": [_trade_view(t, db) for t in paper.open_trades(db)],

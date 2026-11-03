@@ -276,11 +276,31 @@ def lock_view(trade: PaperTrade, th: dict) -> dict:
     if step <= 0:
         return out
     steps = max(0, int(math.floor((stop - entry) * sign / step + 1e-6)))
+    to_target = max(1, int(round(abs(first_target - entry) / step)))       # steps from the entry to the first target
+    target_moves = int(st.get("target_moves") or 0)
+    shown = max(to_target, steps + 1)                                       # the ladder: every step to the target, and the next one
     out.update(steps=steps, step=step, pct_locked=round(steps * float(st.get("trail_lock_pct") or 10), 2),
                next_trigger=entry + sign * ((steps + 1) * step + gap), next_stop=entry + sign * (steps + 1) * step,
-               first_target=first_target, target_moves=int(st.get("target_moves") or 0),
-               target_moves_on=st.get("trail_lock_target", "move") == "move")
+               first_target=first_target, target_moves=target_moves,
+               target_moves_on=st.get("trail_lock_target", "move") == "move",
+               steps_to_target=to_target, gap=gap, entry=entry, first_stop=first_stop,
+               levels=[entry + sign * k * step for k in range(1, shown + 1)],
+               target_reached=target_moves > 0, beyond_target=steps > to_target,
+               locked_r_per_step=round(step / abs(entry - first_stop), 3) if entry != first_stop else None)
     return out
+
+
+def order_wait(db: Session, order: PaperOrder) -> dict:
+    """Where an entry type 2 or 3 order stands with its zone: waiting for a candle to close inside the zone, or armed
+    (a candle has closed inside, so the next candle can enter). Entry type 1 is a limit: it fills on a touch."""
+    if order.entry_type not in ("TYPE_2", "TYPE_3") or not order.zone_id:
+        return {"wait": "limit"}
+    z = db.get(Zone, order.zone_id)
+    if z is None:
+        return {"wait": "unknown"}
+    if z.inside_armed:
+        return {"wait": "armed", "since": z.inside_ts.isoformat() if z.inside_ts else None}
+    return {"wait": "testing" if z.in_visit else "waiting"}
 
 
 def funding_so_far(db: Session, trade: PaperTrade, until: datetime) -> float:

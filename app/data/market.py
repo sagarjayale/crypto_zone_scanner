@@ -95,14 +95,27 @@ def _store_premium(db: Session, rows: list[dict]) -> int:
 
 
 def _upsert(db: Session, model, rows: list[dict], keys: tuple[str, ...]) -> int:
-    """Insert rows, replacing any with the same key, in batches (MySQL, PostgreSQL or SQLite)."""
+    """Insert rows, replacing any with the same key, in batches (MySQL, PostgreSQL or SQLite).
+
+    Rows are grouped by the columns that actually hold a value, and each group gets a statement naming exactly those
+    columns. Old Binance funding records have no mark price: SQLAlchemy leaves a column that is empty in the first row
+    out of the INSERT, and MySQL then refuses an update that names it ("Unknown column 'new.mark'"). An empty value is
+    never written over a stored one."""
     if not rows:
         return 0
     from .sync import upsert_statement
-    stmt = upsert_statement(db.bind.dialect.name, model, keys, [c for c in rows[0] if c not in keys])
-    for i in range(0, len(rows), 2000):
-        db.execute(stmt, rows[i:i + 2000])
-        db.commit()
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        cols = tuple(c for c in r if c in keys or r[c] is not None)
+        groups.setdefault(cols, []).append({c: r[c] for c in cols})
+    for cols, part in groups.items():
+        values = [c for c in cols if c not in keys]
+        if not values:                      # only the key columns: nothing to update, still insert the row
+            values = [c for c in cols if c != keys[0]][:1] or list(cols)[:1]
+        stmt = upsert_statement(db.bind.dialect.name, model, keys, values)
+        for i in range(0, len(part), 2000):
+            db.execute(stmt, part[i:i + 2000])
+            db.commit()
     return len(rows)
 
 
