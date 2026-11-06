@@ -26,6 +26,7 @@ from ..alerts import telegram
 from ..config import MODES
 from ..data import market
 from ..data import sync as data_sync
+from ..data.resample import close_time, open_after
 from ..db import SessionLocal
 from ..engine import scanner
 from ..models import Instrument, Job, Rejection, SyncState
@@ -125,6 +126,28 @@ async def sync_and_scan(client, job_type: str, timeframes: list[str] | None = No
     return job_id
 
 
+CATCH_UP = ("5m", "15m", "30m", "1h", "2h", "4h", "1d", "1w", "1mo")
+
+
+def overdue_timeframes(db, keys: list[str], now: datetime) -> dict[str, list[str]]:
+    """Per coin, the downloaded timeframes whose next candle has already closed but is not stored: left behind when a
+    minute run was skipped (the previous one still running) or failed. Only timeframes the coin already has; a first
+    download stays with its own job. One query for all coins."""
+    if not keys:
+        return {}
+    out: dict[str, list[str]] = {}
+    rows = db.execute(select(SyncState.instrument_key, SyncState.timeframe, SyncState.last_candle_ts, SyncState.last_sync_at).where(
+        SyncState.instrument_key.in_(keys), SyncState.timeframe.in_(CATCH_UP), SyncState.last_candle_ts.isnot(None))).all()
+    for key, tf, last, synced in rows:
+        if close_time(open_after(last, tf), tf) > now:
+            continue
+        # asked for already within one candle's length (a coin Binance stopped trading has nothing new): wait
+        if synced is not None and now - synced < min(close_time(last, tf) - last, timedelta(days=1)):
+            continue
+        out.setdefault(key, []).append(tf)
+    return out
+
+
 def closed_timeframes(now: datetime, enabled: list[str] | None = None) -> list[str]:
     """Downloaded timeframes with a candle that closed at the last minute boundary (UTC). 1-minute candles only when an
     enabled mode reads them (the 15 min mode)."""
@@ -158,33 +181,47 @@ async def bar_close(client, now: datetime | None = None) -> dict | None:
             held_ = {o.instrument_key for o in paper.live_orders(db)} | {t.instrument_key for t in paper.open_trades(db)}
             keys_ = status.downloaded(db, status.ready_keys(db, _universe(db) + sorted(held_ - set(_universe(db)))))
             # coins still on their first full download are left to it: the minute job never starts a partial one
-            return tfs_, held_, keys_
-    tfs, held, keys = await asyncio.to_thread(plan)
-    if not tfs or not keys:
+            return tfs_, held_, keys_, overdue_timeframes(db, keys_, now)
+    tfs, held, keys, late = await asyncio.to_thread(plan)
+    if not (keys or held) or not (tfs or late or held):
         return None
     gate, errors, scanned, events = asyncio.Semaphore(8), [], [], []
 
     async def one(key: str):
-        async with gate:
-            try:
-                with SessionLocal() as d:
-                    got = await data_sync.sync_symbol(d, client, key, tfs, now=now)
-            except Exception as exc:
-                errors.append(f"{key}: {type(exc).__name__}: {exc}")
-                return
+        # this minute's timeframes, plus any whose candles fell behind (a run that was skipped or failed is caught up here)
+        wanted = sorted(set(tfs) | set(late.get(key, ())))
+        got: dict = {}
+        if wanted:
+            async with gate:
+                try:
+                    with SessionLocal() as d:
+                        got = await data_sync.sync_symbol(d, client, key, wanted, now=now)
+                except Exception as exc:
+                    errors.append(f"{key}: {type(exc).__name__}: {exc}")
+                    # no return: the paper safety net and trailing below still run on the candles already stored
         try:
             if any(got.values()):
                 await scanpool.scan(key, False, now)
                 scanned.append(key)
-            if key in held:
-                def net():
-                    with SessionLocal() as d:
-                        return paper.on_candles(d, key)
-                events.extend(await asyncio.to_thread(net))
         except Exception as exc:
             errors.append(f"{key}: {type(exc).__name__}: {exc}")
+        if key in held:
+            await safety_net(key)
+
+    async def safety_net(key: str):
+        """Paper orders and positions of this coin against the stored candles, and its trailing stop: every minute,
+        whatever happened to the download or the scan."""
+        def net():
+            with SessionLocal() as d:
+                return paper.on_candles(d, key)
+        try:
+            events.extend(await asyncio.to_thread(net))
+        except Exception as exc:
+            errors.append(f"{key} (paper): {type(exc).__name__}: {exc}")
     await asyncio.gather(*(one(k) for k in keys))
+    await asyncio.gather(*(safety_net(k) for k in sorted(held - set(keys))))     # held coins not downloaded here
     summary = {"at": now.isoformat(timespec="seconds"), "timeframes": tfs, "coins": len(keys), "scanned": len(scanned),
+               "caught_up": sum(len(v) for v in late.values()),
                "seconds": round(asyncio.get_running_loop().time() - started, 1), "errors": len(errors), "first_error": errors[0] if errors else None}
     live.state["last_scan"], live.state["candle_close"] = now, summary
     if errors:

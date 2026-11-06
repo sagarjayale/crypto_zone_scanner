@@ -132,7 +132,10 @@ def test_candle_close_job_downloads_what_closed_and_scans():
     assert live.state["last_scan"] == now and page.got[-1]["type"] == "scan" and page.got[-1]["coins"] == [KEY]
     with SessionLocal() as db:
         settings_store.put(db, "modes", ["DAILY", "MONTHLY"])
-    assert asyncio.run(jobs.bar_close(client, datetime(2026, 10, 18, 12, 7, 8))) is None      # no mode reads 1 minute candles
+    late = LiveFake(now=datetime(2026, 10, 18, 12, 7, 8))
+    out = asyncio.run(jobs.bar_close(late, datetime(2026, 10, 18, 12, 7, 8)))        # no mode reads 1 minute candles
+    # the 12:05 run never happened here, so its 5 minute candle is caught up now; nothing else is asked for
+    assert {c[2] for c in late.calls if c[0] == "klines"} == {"5m"} and out["caught_up"] == 1
     with SessionLocal() as db:
         db.delete(db.get(__import__("app.models", fromlist=["Setting"]).Setting, "modes"))
         db.commit()

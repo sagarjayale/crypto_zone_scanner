@@ -984,6 +984,7 @@ def _trade_view(t: PaperTrade, db: Session) -> dict:
                open_pnl=round((price - t.fill_price) * sign * t.quantity - (t.fees or 0) + (funding or 0), 4) if open_ else None)
     if t.exit_ts is None and t.fill_price and t.quantity:          # the "Trailing / locked" column of an open position
         out["lock"] = paper.lock_view(t, settings_store.thresholds(db, t.timeframe or "1d"))
+        out["lag"] = paper.candle_lag(db, t.instrument_key)
     return out
 
 
@@ -1037,8 +1038,8 @@ async def paper_enter(order_id: int, allow_low_rr: bool = Body(False, embed=True
 
 @app.get("/api/paper/positions", tags=["paper"])
 def paper_positions(db: Session = Depends(get_db)):
-    pending = [{**row(o), "symbol": o.instrument_key, "price": live.state["prices"].get(o.instrument_key), **paper.order_wait(db, o)}
-               for o in paper.live_orders(db)]
+    pending = [{**row(o), "symbol": o.instrument_key, "price": live.state["prices"].get(o.instrument_key), **paper.order_wait(db, o),
+                "lag": paper.candle_lag(db, o.instrument_key)} for o in paper.live_orders(db)]
     closed = db.scalars(select(PaperTrade).where(PaperTrade.exit_ts.isnot(None), PaperTrade.archived.isnot(True))
                         .order_by(PaperTrade.exit_ts.desc()).limit(200)).all()
     return {"pending": pending, "open": [_trade_view(t, db) for t in paper.open_trades(db)],
@@ -1046,7 +1047,7 @@ def paper_positions(db: Session = Depends(get_db)):
 
 
 @app.get("/api/paper/chart/{kind}/{item_id}", tags=["paper"])
-def paper_chart(kind: str, item_id: int, db: Session = Depends(get_db)):
+def paper_chart(kind: str, item_id: int, tf: str | None = None, db: Session = Depends(get_db)):
     """Everything the Paper page chart needs for one pending order (kind=order) or one open or closed trade (kind=trade),
     in one request: the candles of its timeframe from before the zone formed to after the exit (or to now), the zone
     with its score breakdown, and the order or trade details."""
@@ -1056,7 +1057,7 @@ def paper_chart(kind: str, item_id: int, db: Session = Depends(get_db)):
     if item is None:
         raise HTTPException(404, f"No such paper {kind}.")
     order = item if kind == "order" else (db.get(PaperOrder, item.order_id) if item.order_id else None)
-    tf = item.timeframe or "1h"
+    tf = tf or item.timeframe or "1h"           # another timeframe can be asked for; the order's own is the default
     if tf not in config.TIMEFRAMES:
         raise HTTPException(400, f"Unknown timeframe {tf}")
     z = db.get(Zone, item.zone_id) if item.zone_id else None
@@ -1076,7 +1077,7 @@ def paper_chart(kind: str, item_id: int, db: Session = Depends(get_db)):
     status = "pending" if kind == "order" else ("open" if exit_ts is None else "closed")
     price = live.state["prices"].get(item.instrument_key)
     out = {"kind": kind, "id": item.id, "status": status, "instrument_key": item.instrument_key, "symbol": item.instrument_key,
-           "timeframe": tf, "mode": plan.mode if plan else None, "side": item.side, "entry_type": item.entry_type, "entry": entry, "stop": item.stop, "target": item.target,
+           "timeframe": tf, "own_timeframe": item.timeframe, "mode": plan.mode if plan else None, "side": item.side, "entry_type": item.entry_type, "entry": entry, "stop": item.stop, "target": item.target,
            "quantity": item.quantity, "leverage": item.leverage, "liq_price": item.liq_price,
            "rr": round(abs(item.target - entry) / abs(entry - item.stop), 2) if item.stop is not None and item.target is not None and entry != item.stop else None,
            "signal_ts": getattr(item, "signal_ts", None), "placed_at": order.created_at if order else None,
@@ -1120,8 +1121,19 @@ def paper_export(db: Session = Depends(get_db)):
 
 @app.patch("/api/paper/positions/{trade_id}", tags=["paper"])
 def paper_edit(trade_id: int, stop: float | None = Body(None), target: float | None = Body(None), db: Session = Depends(get_db)):
+    t = db.get(PaperTrade, trade_id)
+    price = live.state["prices"].get(t.instrument_key) if t is not None else None
     try:
-        return row(paper.edit(db, trade_id, stop, target, data_sync.now_utc()))
+        return row(paper.edit(db, trade_id, stop, target, data_sync.now_utc(), price))
+    except ValueError as exc:
+        _paper_error(exc)
+
+
+@app.patch("/api/paper/orders/{order_id}", tags=["paper"])
+def paper_order_edit(order_id: int, stop: float | None = Body(None), target: float | None = Body(None), db: Session = Depends(get_db)):
+    """Change the stop and target of a pending order (from the chart). The size is worked out again for the same risk."""
+    try:
+        return row(paper.edit_order(db, order_id, stop, target, data_sync.now_utc()))
     except ValueError as exc:
         _paper_error(exc)
 

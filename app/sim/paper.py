@@ -337,7 +337,11 @@ def _refresh_order(db: Session, order: PaperOrder) -> bool:
     if not z or z.status not in ACTIVE or not p or p.status == "cancelled":
         order.status, order.note = "cancelled", f"zone {z.status if z else 'removed'}"
         return False
+    edited = bool(order.note and order.note.startswith(EDITED))
+    if edited and p.status == "pending" and (p.entry, p.entry_type or "TYPE_1") == (order.entry, order.entry_type or "TYPE_1"):
+        return True                    # your stop and target stay while the scanner's entry is unchanged
     if p.status == "pending" and (p.entry, p.stop, p.target, p.entry_type or "TYPE_1") != (order.entry, order.stop, order.target, order.entry_type or "TYPE_1"):
+        order.note = None              # the plan has a new entry: the order follows it again
         order.plan_id, order.entry, order.stop, order.target = p.id, p.entry, p.stop, p.target   # the plan got a new version
         order.entry_type = p.entry_type or "TYPE_1"
         order.quantity = quantity(db, order.instrument_key, p.entry, p.stop)
@@ -413,6 +417,20 @@ def _net_tf(db: Session, key: str) -> tuple[str, timedelta]:
     return ("1m", timedelta(minutes=1)) if st is not None and st.last_candle_ts is not None else ("5m", timedelta(minutes=5))
 
 
+def candle_lag(db: Session, key: str, now: datetime | None = None) -> dict:
+    """How far behind the safety net's candles (1 minute, or 5 minutes without them) are for a coin: minutes from the
+    close of the newest stored candle to now. A few minutes behind is normal; much more means stops, fills and the
+    trailing stop on stored candles wait until the candles catch up."""
+    from ..data.resample import close_time
+    from ..models import SyncState
+    tf, step = _net_tf(db, key)
+    st = db.get(SyncState, (key, tf))
+    if st is None or st.last_candle_ts is None:
+        return {"tf": tf, "minutes": None}
+    now = now or now_utc()
+    return {"tf": tf, "minutes": max(0, int((now - close_time(st.last_candle_ts, tf)).total_seconds() // 60))}
+
+
 def on_candles(db: Session, key: str) -> list[dict]:
     """Safety net, run after each candle close: replay the stored candles that the order or position has not seen yet,
     with the same rules as the backtest. Catches anything the live price feed missed."""
@@ -464,7 +482,10 @@ def manual_close(db: Session, trade_id: int, price: float, now: datetime) -> Pap
     return trade
 
 
-def edit(db: Session, trade_id: int, stop: float | None, target: float | None, now: datetime) -> PaperTrade:
+def edit(db: Session, trade_id: int, stop: float | None, target: float | None, now: datetime, price: float | None = None) -> PaperTrade:
+    """Change the stop and target of an open position. With the live price given, a stop or target the price is already
+    past is refused (it would close the position at once). A trailing stop keeps tightening from what it has locked:
+    a stop set looser than that is moved back at the next candle close."""
     trade = db.get(PaperTrade, trade_id)
     if not trade or trade.exit_ts is not None:
         raise ValueError("No open position with that id.")
@@ -472,6 +493,12 @@ def edit(db: Session, trade_id: int, stop: float | None, target: float | None, n
     new_target = trade.target if target is None else target
     if (new_stop >= new_target) if trade.side == "demand" else (new_stop <= new_target):
         raise ValueError("The stop and target are the wrong way round for this position.")
+    if price is not None:
+        long = trade.side == "demand"
+        if stop is not None and ((new_stop >= price) if long else (new_stop <= price)):
+            raise ValueError(f"The stop {new_stop:g} is already past the price {price:g}: it would close the position at once.")
+        if target is not None and target != trade.target and ((new_target <= price) if long else (new_target >= price)):
+            raise ValueError(f"The target {new_target:g} is already past the price {price:g}: it would close the position at once.")
     log = list(trade.history or [])
     for field, value in (("stop", new_stop), ("target", new_target)):
         if value != getattr(trade, field):
@@ -480,6 +507,31 @@ def edit(db: Session, trade_id: int, stop: float | None, target: float | None, n
     trade.history = log
     db.commit()
     return trade
+
+
+EDITED = "edited by you"
+
+
+def edit_order(db: Session, order_id: int, stop: float | None, target: float | None, now: datetime) -> PaperOrder:
+    """Change the stop and target of a pending order. The size is worked out again so the order still risks the risk
+    setting at its stop, and the leverage check is made again. The entry stays the scanner's. The order then keeps your
+    stop and target while its plan's entry stays the same; if the scanner moves the entry, the order follows the plan again."""
+    order = db.get(PaperOrder, order_id)
+    if not order or order.status != "pending":
+        raise ValueError("No pending order with that id.")
+    new_stop = order.stop if stop is None else float(stop)
+    new_target = order.target if target is None else float(target)
+    long = order.side == "demand"
+    if not ((new_stop < order.entry < new_target) if long else (new_target < order.entry < new_stop)):
+        raise ValueError("For a long the stop must be below the entry and the target above it; for a short the other way round.")
+    qty = quantity(db, order.instrument_key, order.entry, new_stop)
+    if qty <= 0:
+        raise ValueError("With this stop the size is below the coin's minimum order size.")
+    order.leverage, order.liq_price = check_leverage(db, order.side, order.entry, new_stop, order.leverage)
+    order.stop, order.target, order.quantity = new_stop, new_target, qty
+    order.note = f"{EDITED} at {now.isoformat(timespec='seconds')}"
+    db.commit()
+    return order
 
 
 def auto_orders(db: Session, rows: list, now: datetime) -> int:

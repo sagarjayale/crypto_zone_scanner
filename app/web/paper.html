@@ -27,10 +27,35 @@
     <button class="btn" id="reset">Reset paper account</button>
   </div>
   <p class="status" id="status" role="status"></p>
-  <section id="tc" class="tradebox" hidden aria-label="Trade chart">
-    <div class="tc-head"><h2 id="tc-title"></h2><span class="spacer"></span><a class="btn" id="tc-full" href="#">Open full chart</a><button class="btn" id="tc-close">Close panel</button></div>
-    <div class="tc-body"><div class="chart-wrap trade" id="tc-chart"></div><dl class="kv" id="tc-detail"></dl></div>
-  </section>
+  <div id="tc" class="tc-modal" hidden>
+    <section class="tc-dialog" role="dialog" aria-modal="true" aria-labelledby="tc-title">
+      <div class="tc-head">
+        <h2 id="tc-title"></h2><span class="spacer"></span>
+        <a class="btn" id="tc-full" href="#" target="_blank" rel="noopener">Open full chart ↗</a>
+        <button class="btn" id="tc-close" aria-label="Close the chart">✕</button>
+      </div>
+      <div class="tc-tools">
+        <div class="seg" id="tc-tfs" role="group" aria-label="Timeframe"></div>
+        <div class="tc-show" id="tc-show" role="group" aria-label="Show on the chart">
+          <label class="check"><input type="checkbox" data-k="zone" checked> Zone</label>
+          <label class="check"><input type="checkbox" data-k="entry" checked> Entry</label>
+          <label class="check"><input type="checkbox" data-k="stop" checked> Stop</label>
+          <label class="check"><input type="checkbox" data-k="target" checked> Target</label>
+          <label class="check"><input type="checkbox" data-k="steps" checked> Lock steps</label>
+          <label class="check"><input type="checkbox" data-k="price" checked> Price</label>
+        </div>
+      </div>
+      <div class="tc-body"><div class="chart-wrap trade tc-chart" id="tc-chart"></div><dl class="kv" id="tc-detail"></dl></div>
+      <div class="tc-edit" id="tc-edit">
+        <label>Stop <input type="number" step="any" id="tc-stop"></label>
+        <label>Target <input type="number" step="any" id="tc-target"></label>
+        <button class="btn primary" id="tc-save">Save</button>
+        <button class="btn" id="tc-reset">Reset</button>
+        <span class="sub" id="tc-edit-note">Drag the stop or target line on the chart, or type a price, then Save.</span>
+      </div>
+      <p class="status" id="tc-status" role="status"></p>
+    </section>
+  </div>
   <h2>Open positions</h2>
   <div class="table-wrap"><table><thead><tr><th>Coin</th><th>Side</th><th>Quantity</th><th>Entry time</th><th>Entry price</th><th>Open for</th><th>Leverage, margin, liquidation</th><th>Stop</th><th>Target</th><th>Trailing / locked</th><th>Price</th><th>Profit or loss (USDT)</th><th></th></tr></thead><tbody id="open"></tbody></table></div>
   <h2>Pending orders</h2>

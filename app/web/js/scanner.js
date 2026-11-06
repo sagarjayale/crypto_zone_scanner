@@ -234,7 +234,7 @@ async function loadStatus() {
   const parts = [s.last_scan ? `Last scan ${clock(s.last_scan)}` : "No scan since the app started"];
   if (s.next_bar_close) parts.push(`next 5 minute bar closes ${clock(s.next_bar_close)}`);
   if (f.last_poll) parts.push(`prices as of ${clock(f.last_poll)}`);
-  if (s.candle_close) parts.push(`last candle close job ${s.candle_close.seconds} s for ${s.candle_close.coins} coins (${s.candle_close.scanned} rescanned)`);
+  if (s.candle_close) parts.push(`last candle close job ${s.candle_close.seconds} s for ${s.candle_close.coins} coins (${s.candle_close.scanned} rescanned${s.candle_close.caught_up ? `, ${s.candle_close.caught_up} late timeframes caught up` : ""})`);
   if (f.error) parts.push(f.error);
   $("foot").textContent = parts.join(". ") + ".";
 }

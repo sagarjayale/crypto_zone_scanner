@@ -35,9 +35,23 @@ function ladderBar(k, sign, p) {
   const ends = el("div", { class: "ladder-ends" }, el("span", {}, fmtPrice(k.entry)), el("span", {}, `🎯 ${fmtPrice(k.target ?? k.first_target)}`));
   return [bar, ends];
 }
+// A warning when the coin's stored candles are behind: stops, fills and the trailing stop on candles wait for them.
+const LAG_WARN_MIN = 5;
+function lagWarning(lag) {
+  if (!lag || lag.minutes == null || lag.minutes <= LAG_WARN_MIN) return null;
+  const m = lag.minutes, txt = m >= 120 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+  return el("span", { class: "lag-warn", title: `The newest stored ${TF_LABEL[lag.tf] || lag.tf} candle closed ${txt} ago. The live price still checks the stop and target every second; the checks on candles (wicks the live price can miss) and the trailing stop catch up when the candles do.` },
+    `⚠ candles ${txt} behind`);
+}
 function lockCell(t, p) {
   const k = t.lock;
   if (!k) return el("td", {}, "");
+  const warn = lagWarning(t.lag);
+  const cell = lockCellBody(t, p, k);
+  if (warn) cell.prepend(warn);
+  return cell;
+}
+function lockCellBody(t, p, k) {
   const sign = t.side === "demand" ? 1 : -1;
   const lines = [];
   if (k.method !== "lock" || k.next_trigger == null) {
@@ -117,6 +131,8 @@ function nearCell(o, n) {
   if (n.r != null) kids.push(el("div", { class: "near-bar" }, el("span", { style: `width:${Math.max(4, 100 - Math.min(n.r, 4) / 4 * 100)}%` })));
   kids.push(el("span", { class: `near-trend ${n.trend}` }, arrowTxt + (n.trend === "closer" ? etaText(n.eta) : "")));
   if (o.wait && o.wait !== "limit") kids.push(el("span", { class: "sub wrap" + (o.wait === "armed" ? " win" : "") }, WAIT_TEXT[o.wait] || ""));
+  const warn = lagWarning(o.lag);
+  if (warn) kids.push(warn);
   return el("td", { class: "nearcell" }, ...kids);
 }
 function nearChips(list) {
@@ -198,24 +214,89 @@ async function enterNow(o) {
   } catch (e) { say(`Could not enter ${o.symbol}. ${e.message}`, true); }
 }
 
-// ---- chart of one order or trade ----------------------------------------------
-const panel = { kind: null, id: null, key: null, status: null };
+// ---- chart of one order or trade: a popup with timeframes, a live candle and stop / target you can drag ----------
+const panel = { kind: null, id: null, key: null, status: null, tf: null, own: null, saved: null, d: null };
 const STATUS_WORD = { pending: "Pending order", open: "Open position", closed: "Closed trade" };
-async function showChart(kind, id) {
-  const box = $("tc");
-  box.hidden = false;
-  $("tc-title").textContent = "Loading";
-  try {
-    const d = await api(`/api/paper/chart/${kind}/${id}`);
-    Object.assign(panel, { kind, id, key: d.instrument_key, status: d.status });
-    $("tc-title").textContent = `${d.symbol} · ${d.side === "demand" ? "Long" : "Short"} · ${TF_LABEL[d.timeframe] || d.timeframe} · ${STATUS_WORD[d.status]}`;
-    $("tc-full").href = `/chart?symbol=${encodeURIComponent(d.instrument_key)}&tf=${d.timeframe}${d.mode ? `&mode=${d.mode}` : ""}${d.zone && d.zone.zone_id ? `&zone=${d.zone.zone_id}` : ""}`;
-    renderDetail(d);
-    box.scrollIntoView({ behavior: "smooth", block: "start" });
-    const n = await TradeChart.show($("tc-chart"), { ...d, result: d.status === "closed" ? d.result : "open" }, null);
-    if (!n) $("tc-title").textContent += " (no candles stored for this timeframe)";
-  } catch (e) { $("tc-title").textContent = "Could not load the chart"; say(`Could not load the chart. ${e.message}`, true); }
+const POPUP_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const SHOW_KEY = "cryptoScanner.paperChartShow";
+let chartShow = (() => { try { return JSON.parse(localStorage.getItem(SHOW_KEY) || "{}"); } catch (e) { return {}; } })();
+let formingTimer = null;
+function closeChart() {
+  $("tc").hidden = true; panel.kind = null; clearInterval(formingTimer);
+  document.body.classList.remove("modal-open");
 }
+async function showChart(kind, id, tf) {
+  const modal = $("tc"), same = panel.kind === kind && panel.id === id;
+  modal.hidden = false; document.body.classList.add("modal-open");
+  $("tc-title").textContent = "Loading"; $("tc-status").textContent = "";
+  try {
+    const d = await api(`/api/paper/chart/${kind}/${id}${tf ? `?tf=${tf}` : ""}`);
+    const own = same && panel.own ? panel.own : (d.own_timeframe || d.timeframe);
+    Object.assign(panel, { kind, id, key: d.instrument_key, status: d.status, tf: d.timeframe, own, d });
+    $("tc-title").textContent = `${d.symbol} · ${d.side === "demand" ? "Long" : "Short"} · ${STATUS_WORD[d.status]} · order on ${TF_LABEL[own] || own}`;
+    $("tc-full").href = `/chart?symbol=${encodeURIComponent(d.instrument_key)}&tf=${d.timeframe}${d.mode ? `&mode=${d.mode}` : ""}${d.zone && d.zone.zone_id ? `&zone=${d.zone.zone_id}` : ""}`;
+    renderTfs(); renderDetail(d);
+    const editable = d.status !== "closed";
+    panel.saved = { stop: d.stop, target: d.target };
+    $("tc-edit").hidden = !editable;
+    $("tc-stop").value = d.stop ?? ""; $("tc-target").value = d.target ?? "";
+    $("tc-edit-note").textContent = d.status === "open"
+      ? "Drag the stop or target line on the chart, or type a price, then Save. A trailing stop keeps tightening from what it has locked."
+      : "Drag the stop or target line on the chart, or type a price, then Save. The size is worked out again for the same risk.";
+    const live = d.status !== "closed" && BAR_SECONDS[d.timeframe] <= 86400;
+    let forming = null;
+    if (live) { try { forming = (await api(`/api/forming/${encodeURIComponent(d.instrument_key)}?tf=${d.timeframe}`)).forming; } catch (e) { /* drawn without it */ } }
+    const row = data.open.find((t) => t.id === id && kind === "trade");
+    const k = row && row.lock;
+    const steps = k && k.levels ? k.levels.map((price, i) => ({ n: i + 1, price, done: i + 1 <= k.steps })) : [];
+    const n = await TradeChart.show($("tc-chart"), { ...d, result: d.status === "closed" ? d.result : "open" }, null,
+      { editable, visible: chartShow, steps, forming, liveCandle: live, onDrag: (field, price, done) => {
+        $(field === "stop" ? "tc-stop" : "tc-target").value = Number(price.toPrecision(8));
+        if (done) $("tc-status").textContent = `${field === "stop" ? "Stop" : "Target"} moved to ${fmtPrice(price)}: press Save to keep it.`;
+      } });
+    if (!n) $("tc-status").textContent = `No ${TF_LABEL[d.timeframe] || d.timeframe} candles are stored for this coin.`;
+    clearInterval(formingTimer);
+    if (live) formingTimer = setInterval(async () => {       // the forming candle from Binance now and then, to stay exact
+      if (panel.kind !== kind || panel.id !== id || $("tc").hidden) return;
+      try { const f = (await api(`/api/forming/${encodeURIComponent(d.instrument_key)}?tf=${panel.tf}`)).forming; if (f) TradeChart.seed(f); } catch (e) { /* next time */ }
+    }, 15000);
+  } catch (e) { $("tc-title").textContent = "Could not load the chart"; $("tc-status").textContent = e.message; }
+}
+const BAR_SECONDS = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "1w": 604800, "1mo": 2678400 };
+function renderTfs() {
+  const box = $("tc-tfs");
+  box.replaceChildren(...POPUP_TFS.map((tf) => el("button", { "aria-pressed": String(tf === panel.tf),
+    title: tf === panel.own ? "the order's own timeframe" : "", onclick: () => { if (tf !== panel.tf) showChart(panel.kind, panel.id, tf); } },
+    TF_LABEL[tf] + (tf === panel.own ? " •" : ""))));
+}
+$("tc-show").addEventListener("change", (e) => {
+  const k = e.target.dataset.k;
+  if (!k) return;
+  chartShow[k] = e.target.checked;
+  try { localStorage.setItem(SHOW_KEY, JSON.stringify(chartShow)); } catch (err) { /* storage not available */ }
+  if (panel.kind) showChart(panel.kind, panel.id, panel.tf);
+});
+for (const box of $("tc-show").querySelectorAll("input")) box.checked = chartShow[box.dataset.k] !== false;
+$("tc-stop").oninput = () => { const v = Number($("tc-stop").value); if (v > 0) TradeChart.setLevels(v, Number($("tc-target").value) || panel.saved.target); };
+$("tc-target").oninput = () => { const v = Number($("tc-target").value); if (v > 0) TradeChart.setLevels(Number($("tc-stop").value) || panel.saved.stop, v); };
+$("tc-reset").onclick = () => {
+  $("tc-stop").value = panel.saved.stop; $("tc-target").value = panel.saved.target;
+  TradeChart.setLevels(panel.saved.stop, panel.saved.target); $("tc-status").textContent = "Back to the saved stop and target.";
+};
+$("tc-save").onclick = async () => {
+  const body = { stop: Number($("tc-stop").value), target: Number($("tc-target").value) };
+  const path = panel.kind === "order" ? `/api/paper/orders/${panel.id}` : `/api/paper/positions/${panel.id}`;
+  try {
+    await api(path, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    panel.saved = body;
+    if (panel.d) { Object.assign(panel.d, body); renderDetail(panel.d); }
+    $("tc-status").textContent = `Saved: stop ${fmtPrice(body.stop)}, target ${fmtPrice(body.target)}.`;
+    await load();
+  } catch (e) { $("tc-status").textContent = `Not saved: ${e.message}`; }
+};
+$("tc-close").onclick = closeChart;
+$("tc").addEventListener("click", (e) => { if (e.target === $("tc")) closeChart(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("tc").hidden) closeChart(); });
 function renderDetail(d) {
   const z = d.zone, rows = [];
   const add = (k, v) => { if (v !== "" && v != null) rows.push(el("dt", {}, k), el("dd", {}, String(v))); };
@@ -249,7 +330,6 @@ function renderDetail(d) {
   for (const h of d.history || []) add(`${h.field === "stop" ? "Stop" : "Target"} changed`, `${stamp(h.time)}: ${fmtPrice(h.old)} to ${h.new == null ? "none" : fmtPrice(h.new)}${h.note ? ` (${h.note})` : ""}`);
   $("tc-detail").replaceChildren(...rows);
 }
-$("tc-close").onclick = () => { $("tc").hidden = true; panel.kind = null; };
 
 async function load() {
   [data, summary] = await Promise.all([api("/api/paper/positions"), api("/api/paper/summary")]);

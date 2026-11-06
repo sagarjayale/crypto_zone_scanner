@@ -226,10 +226,11 @@ def test_paper_and_settings_through_the_api(monkeypatch):
         assert out["universe"] == [LIVE_KEY, KEY]                                                       # symbols are upper-cased
         assert out["sync_job_id"] and wait_job(c, out["sync_job_id"])["status"] == "done"
         assert c.get("/api/jobs").json()[0]["type"] == "new coins"
-        # 1 minute zones are left out: the download in between keeps only the last 14 days of 1 minute candles counted
-        # from today's real date, so once the calendar is past the test data (18 Oct 2026) the rebuild sees fewer of them.
+        # 1 and 5 minute zones are left out: the download in between keeps only the last 14 days of 1 minute and 90 days
+        # of 5 minute candles counted from today's real date, so once the calendar moves past the test data (18 Oct 2026)
+        # the rebuild sees fewer of them.
         active = lambda d: sorted((z.timeframe, z.side, z.proximal, z.distal, z.touches, z.status) for z in d.scalars(
-            select(Zone).where(Zone.instrument_key == KEY, Zone.status.in_(("fresh", "tested")), Zone.timeframe != "1m")))
+            select(Zone).where(Zone.instrument_key == KEY, Zone.status.in_(("fresh", "tested")), Zone.timeframe.notin_(("1m", "5m")))))
         with SessionLocal() as db:
             before = active(db)
         c.put("/api/settings", json={"universe": [KEY]})
