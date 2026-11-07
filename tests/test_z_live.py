@@ -103,7 +103,10 @@ def test_mark_price_stream_messages_and_market_hours():
                       {"e": "markPriceUpdate", "s": "PEPEUSDT", "p": "0.0000123400"}, {"e": "markPriceUpdate", "s": "BAD"}])
     assert live.parse_mark_prices(raw) == {"BTCUSDT": 67012.3, "PEPEUSDT": 0.00001234}
     assert live.parse_mark_prices(json.dumps({"stream": "!markPrice@arr@1s", "data": [{"s": "ETHUSDT", "p": "2500"}]})) == {"ETHUSDT": 2500.0}
-    assert live.stream_url() == "wss://fstream.binance.com/market/ws/!markPrice@arr@1s"      # Binance's routed address since 2026
+    assert live.stream_url() == "wss://fstream.binance.com/market/ws/!miniTicker@arr"        # Binance's routed address since 2026
+    # the stream now carries the last traded price ("c"), as on TradingView and as Binance fills orders
+    mini = json.dumps([{"e": "24hrMiniTicker", "s": "BULLAUSDT", "c": "0.06972", "o": "0.07055"}, {"e": "24hrMiniTicker", "s": "X"}])
+    assert live.parse_prices(mini) == {"BULLAUSDT": 0.06972}
     assert live.market_open(datetime(2026, 10, 18, 3, 0)) and live.market_open(datetime(2026, 12, 25, 23, 59))   # a Sunday, Christmas
     assert live.next_bar_close(datetime(2026, 10, 18, 23, 57, 30)) == datetime(2026, 10, 19, 0, 0)
 

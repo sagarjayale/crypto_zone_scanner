@@ -213,34 +213,20 @@ def _stop_reason(trade: PaperTrade) -> str:
     return "trail" if trade.trail and trade.trail.get("moves") else "stop"
 
 
-def update_trailing(db: Session, trade: PaperTrade, now: datetime) -> list[dict]:
-    """Move the stop of an open position with a trailing stop, from the closed candles of its trailing timeframe since
-    the fill (worked out again from the start each time, so it is the same as the backtest). The stop only tightens:
-    a stop you set by hand that is already tighter stays."""
-    st = trade.trail
-    if not st or trade.exit_ts is not None:
-        return []
-    tf = st.get("tf") or trade.timeframe or "1h"
-    th = settings_store.thresholds(db, trade.timeframe or "1d")
-    prior = load_candles(db, trade.instrument_key, tf, until=trade.fill_ts - timedelta(seconds=1), last=20)
-    bars = load_candles(db, trade.instrument_key, tf, since=trade.fill_ts + timedelta(seconds=1))
-    t = trailing.Trailer(trade.side, trade.fill_price, st["first_stop"], th, st,
-                         list(zip(prior["high"], prior["low"], prior["close"])) if not prior.empty else [],
-                         target=st.get("first_target", trade.target))
-    for b in bars.itertuples():
-        t.close_bar(b.high, b.low, b.close)
+def _apply_trailer(trade: PaperTrade, st: dict, state: dict, t: "trailing.Trailer", now: datetime, source: str) -> list[dict]:
+    """Write what a Trailer worked out onto the trade: a tighter stop, a target moved forward, or the target removed.
+    The stop only tightens: a stop you set by hand that is already tighter stays."""
     events, log = [], list(trade.history or [])
     tighter = (t.stop > trade.stop) if trade.side == "demand" else (t.stop < trade.stop)
-    state = dict(st)
     if t.moves and tighter:
         log.append({"time": now.isoformat(timespec="seconds"), "field": "stop", "old": trade.stop, "new": round(t.stop, 10),
-                    "note": f"trailing stop ({st['trail_method']}): {t.why}, best +{t.best_r:.2f} R"})
+                    "note": f"trailing stop ({st['trail_method']}, {source}): {t.why}, best +{t.best_r:.2f} R"})
         trade.stop = float(t.stop)
         state["moves"] = int(state.get("moves") or 0) + 1
         events.append(_event("stop moved", trade, trade.stop, now))
     if t.target_moves > int(state.get("target_moves") or 0):      # lock with "move": the target moved forward
         log.append({"time": now.isoformat(timespec="seconds"), "field": "target", "old": trade.target, "new": round(t.target, 10),
-                    "note": f"target moved forward: price reached it, the trade runs on (stop locked at {t.stop:.8g})"})
+                    "note": f"target moved forward ({source}): price reached it, the trade runs on (stop locked at {t.stop:.8g})"})
         trade.target = float(t.target)
         state["target_moves"] = t.target_moves
         events.append(_event("target moved", trade, trade.target, now))
@@ -248,9 +234,102 @@ def update_trailing(db: Session, trade: PaperTrade, now: datetime) -> list[dict]
         state["no_target"] = True
         log.append({"time": now.isoformat(timespec="seconds"), "field": "target", "old": trade.target, "new": None,
                     "note": "target removed: the trailing stop lets the trade run"})
-    if state != st:
+    if state != st or len(log) != len(trade.history or []):
         trade.trail, trade.history = state, log
     return events
+
+
+def _better_price(side: str, a: float | None, b: float) -> float:
+    """The more favourable of two prices for the trade: the higher for a long, the lower for a short."""
+    if a is None:
+        return b
+    return max(a, b) if side == "demand" else min(a, b)
+
+
+def _lock_trailer(trade: PaperTrade, st: dict, th: dict, best: float) -> "trailing.Trailer":
+    """The lock method depends only on the best price reached since the fill, so one bar at that price gives the same
+    stop, steps and target moves as replaying every candle."""
+    t = trailing.Trailer(trade.side, trade.fill_price, st["first_stop"], th, st, [], target=st.get("first_target", trade.target))
+    t.close_bar(best, best, best)
+    return t
+
+
+def live_lock(db: Session, trade: PaperTrade, price: float, now: datetime, th: dict | None = None) -> list[dict]:
+    """Lock trailing on the live (last traded) price: when the price passes the next step, the stop moves at once,
+    instead of at the next candle close. The candles after this moment are still checked by the safety net."""
+    st = trade.trail
+    if not st or st.get("trail_method") != "lock" or trade.exit_ts is not None:
+        return []
+    best = _better_price(trade.side, st.get("best"), price)
+    if best == st.get("best") or (best - trade.fill_price) * (1 if trade.side == "demand" else -1) <= 0:
+        return []
+    state = dict(st)
+    state["best"] = best
+    th = th or settings_store.thresholds(db, trade.timeframe or "1d")
+    before = trade.stop
+    events = _apply_trailer(trade, st, state, _lock_trailer(trade, st, th, best), now, "live price")
+    trade.trail = {**(trade.trail or state), "best": best}
+    if trade.stop != before:
+        # the candle this happened in is covered by the live price; the safety net starts with the next one, so a dip
+        # earlier in the same candle is not mistaken for a hit of the new stop
+        tf, step = _net_tf(db, trade.instrument_key)
+        start = now.replace(second=0, microsecond=0)
+        if step >= timedelta(minutes=5):
+            start = start - timedelta(minutes=start.minute % 5)
+        if trade.checked_ts is None or trade.checked_ts < start:
+            trade.checked_ts = start
+    return events
+
+
+def _trail_bars(db: Session, trade: PaperTrade, tf: str, since: datetime):
+    """Candles of the trailing timeframe from `since`; a trade set to trail on 1 minute candles uses 5 minute ones
+    while its coin has no 1 minute candles, instead of not moving at all."""
+    bars = load_candles(db, trade.instrument_key, tf, since=since)
+    if bars.empty and tf == "1m":
+        from ..models import SyncState
+        st1 = db.get(SyncState, (trade.instrument_key, "1m"))
+        if st1 is None or st1.last_candle_ts is None or st1.last_candle_ts < since:
+            return "5m", load_candles(db, trade.instrument_key, "5m", since=since)
+    return tf, bars
+
+
+def update_trailing(db: Session, trade: PaperTrade, now: datetime) -> list[dict]:
+    """Move the stop of an open position with a trailing stop, from the closed candles of its trailing timeframe since
+    the fill. Lock: only the candles not seen yet are read (it depends on the best price alone, kept on the trade).
+    Other methods are worked out again from the fill, when a new candle has closed (the same as the backtest)."""
+    st = trade.trail
+    if not st or trade.exit_ts is not None:
+        return []
+    tf = st.get("tf") or trade.timeframe or "1h"
+    th = settings_store.thresholds(db, trade.timeframe or "1d")
+    state = dict(st)
+    if st.get("trail_method") == "lock":
+        seen = st.get("checked")
+        since = (datetime.fromisoformat(seen) if seen else trade.fill_ts) + timedelta(seconds=1)
+        used, bars = _trail_bars(db, trade, tf, since)
+        if bars.empty:
+            return []
+        extreme = float(bars["high"].max()) if trade.side == "demand" else float(bars["low"].min())
+        best = _better_price(trade.side, st.get("best"), extreme)
+        state["best"], state["checked"] = best, bars["ts"].iloc[-1].to_pydatetime().isoformat()
+        if (best - trade.fill_price) * (1 if trade.side == "demand" else -1) <= 0:
+            trade.trail = state
+            return []
+        return _apply_trailer(trade, st, state, _lock_trailer(trade, st, th, best), now, f"{used} candles")
+    used, bars = _trail_bars(db, trade, tf, trade.fill_ts + timedelta(seconds=1))
+    if bars.empty:
+        return []
+    last = bars["ts"].iloc[-1].to_pydatetime().isoformat()
+    if st.get("checked") == last:              # no new candle since the last time: nothing can have changed
+        return []
+    state["checked"] = last
+    prior = load_candles(db, trade.instrument_key, used, until=trade.fill_ts - timedelta(seconds=1), last=20)
+    t = trailing.Trailer(trade.side, trade.fill_price, st["first_stop"], th, st,
+                         list(zip(prior["high"], prior["low"], prior["close"])) if not prior.empty else [],
+                         target=st.get("first_target", trade.target))
+    for b in bars.itertuples():
+        t.close_bar(b.high, b.low, b.close)
+    return _apply_trailer(trade, st, state, t, now, f"{used} candles")
 
 
 def lock_view(trade: PaperTrade, th: dict) -> dict:
@@ -387,15 +466,19 @@ def on_prices(db: Session, prices: dict[str, float], now: datetime) -> list[dict
     """Apply one round of live prices: fill pending orders, then check stops and targets."""
     events = []
     for order in live_orders(db):
-        if not _refresh_order(db, order):
-            continue
+        # entry types 2 and 3 wait for candle closes: the minute safety net handles them. A limit order is checked
+        # against its plan only when the price touches it (the safety net checks every order once a minute), so a
+        # second with many orders stays light.
         if not is_limit(order):
-            events.extend(_confirmed_fill(db, order))
             continue
         ltp = prices.get(order.instrument_key)
-        if ltp is not None and fills.entry_touched(order.side, order.entry, ltp, ltp):
-            trade = _fill(db, order, now)
-            events.append(_event("filled", trade, order.entry, now))
+        if ltp is None or not fills.entry_touched(order.side, order.entry, ltp, ltp):
+            continue
+        if not _refresh_order(db, order) or not fills.entry_touched(order.side, order.entry, ltp, ltp):
+            continue
+        trade = _fill(db, order, now)
+        events.append(_event("filled", trade, order.entry, now))
+    th_cache: dict = {}
     for trade in open_trades(db):
         ltp = prices.get(trade.instrument_key)
         if ltp is None:
@@ -406,6 +489,11 @@ def on_prices(db: Session, prices: dict[str, float], now: datetime) -> list[dict
         elif (ltp >= target_of(trade)) if trade.side == "demand" else (ltp <= target_of(trade)):
             close(trade, trade.target, "target", now, db)  # a target is a limit exit: you get the target price
             events.append(_event("target hit", trade, trade.target, now))
+        elif trade.trail and trade.trail.get("trail_method") == "lock":
+            tf = trade.timeframe or "1d"
+            if tf not in th_cache:
+                th_cache[tf] = settings_store.thresholds(db, tf)
+            events.extend(live_lock(db, trade, ltp, now, th_cache[tf]))
     db.commit()
     return events
 

@@ -185,9 +185,11 @@ class BinanceClient:
         return await self._get("/fapi/v1/premiumIndex", weight=10)
 
     async def ltp(self, keys: list[str]) -> dict[str, float]:
-        """Mark prices for the given coins, from one call for all coins. Used when the WebSocket is down."""
+        """Last traded prices for the given coins (as on TradingView and as Binance fills limit and stop orders), from one
+        call for all coins. Used when the WebSocket is down."""
         wanted = set(keys)
-        return {r["symbol"]: float(r["markPrice"]) for r in await self.premium_index() if r["symbol"] in wanted}
+        return {r["symbol"]: float(r["price"]) for r in await self._get("/fapi/v1/ticker/price", weight=2)
+                if r.get("symbol") in wanted and r.get("price") not in (None, "")}
 
     async def funding_history(self, symbol: str, start: datetime | None = None, limit: int = 1000) -> list[dict]:
         params = {"symbol": symbol, "limit": limit}

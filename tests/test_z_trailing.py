@@ -128,7 +128,7 @@ def test_paper_positions_trail_on_closed_candles_and_exit_as_trailing_stop():
             moved = paper.update_trailing(db, t, hour + timedelta(hours=2))
             db.commit()
             assert [e["event"] for e in moved] == ["stop moved"] and t.stop == pytest.approx(521 + 0.5 * 9)
-            assert t.history[-1]["field"] == "stop" and "trailing stop (step)" in t.history[-1]["note"]
+            assert t.history[-1]["field"] == "stop" and "trailing stop (step, 1h candles)" in t.history[-1]["note"]
             assert paper.update_trailing(db, t, hour + timedelta(hours=2)) == []      # nothing new: the stop stays
             out = paper.on_prices(db, {LIVE_KEY: 525.0}, hour + timedelta(hours=2, minutes=5))
             db.refresh(t)

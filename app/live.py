@@ -10,6 +10,7 @@ handled the same way. While it is down or silent, mark prices are fetched over R
 for every coin), so alerts and paper fills carry on."""
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from datetime import datetime, timedelta
 
@@ -25,7 +26,7 @@ from .models import Instrument, TradePlan, Zone, ZoneEvent
 from .sim import paper
 from .binance.client import BinanceError
 
-STREAM = "!markPrice@arr@1s"
+STREAM = "!miniTicker@arr"      # last traded price of every coin, once a second (as TradingView and Binance order fills)
 STREAM_PATH = "/market/ws/"     # Binance's routed address for market streams (mark price, klines, trades)
 SILENT_AFTER = 15               # seconds without a message before the connection is dropped and opened again
 log = logging.getLogger(__name__)
@@ -145,6 +146,9 @@ def _process(prices: dict[str, float], now: datetime) -> tuple[list, list, int]:
     return alerts, fills_, placed
 
 
+# The live checks get their own workers, so the minute job (downloads, scans, the candle safety net) cannot hold them up.
+_LIVE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="live")
+_tasks: set = set()
 _busy = {"processing": False}
 _keys_cache = {"keys": None, "at": 0.0}
 
@@ -157,7 +161,7 @@ async def poll_once(client, now: datetime | None = None, prices: dict[str, float
     now = now or now_utc()
     loop = asyncio.get_running_loop()
     if _keys_cache["keys"] is None or loop.time() - _keys_cache["at"] > 10 or prices is None:
-        _keys_cache["keys"], _keys_cache["at"] = await asyncio.to_thread(_wanted_keys), loop.time()
+        _keys_cache["keys"], _keys_cache["at"] = await loop.run_in_executor(_LIVE_POOL, _wanted_keys), loop.time()
     keys = _keys_cache["keys"]
     if not keys:
         return []
@@ -174,7 +178,7 @@ async def poll_once(client, now: datetime | None = None, prices: dict[str, float
         return []
     _busy["processing"] = True
     try:
-        alerts, fills_, placed = await asyncio.to_thread(_process, prices, now)
+        alerts, fills_, placed = await asyncio.get_running_loop().run_in_executor(_LIVE_POOL, _process, prices, now)
     finally:
         _busy["processing"] = False
     if alerts or fills_ or placed:
@@ -190,16 +194,38 @@ async def poll_once(client, now: datetime | None = None, prices: dict[str, float
     return alerts
 
 
-def parse_mark_prices(message: str | bytes) -> dict[str, float]:
-    """The all-market mark price stream: a list of {"s": symbol, "p": mark price, ...}, possibly wrapped by a combined stream."""
+def parse_prices(message: str | bytes) -> dict[str, float]:
+    """The all-market stream: a list of {"s": symbol, "c": last price, ...} (mini ticker), possibly wrapped by a combined
+    stream. A mark price message ({"p": ...}) is read too."""
     data = json.loads(message)
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
     out = {}
     for item in data if isinstance(data, list) else [data]:
-        if isinstance(item, dict) and item.get("s") and item.get("p") not in (None, ""):
-            out[item["s"]] = float(item["p"])
+        if not isinstance(item, dict) or not item.get("s"):
+            continue
+        value = item.get("c") if item.get("c") not in (None, "") else item.get("p")
+        if value not in (None, ""):
+            out[item["s"]] = float(value)
     return out
+
+
+parse_mark_prices = parse_prices         # the old name, kept for anything that still uses it
+
+
+def _spawn(coro) -> None:
+    """Run the checks beside the feed: the feed keeps reading Binance's messages (and answering its pings) meanwhile."""
+    task = asyncio.create_task(coro)
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+async def _checks(client, prices: dict) -> None:
+    try:
+        await poll_once(client, prices=prices)
+    except Exception as exc:     # a database hiccup must not drop the price feed
+        state["error"] = f"{type(exc).__name__}: {exc}"
+        log.warning("live checks: %s: %s", type(exc).__name__, exc)
 
 
 def stream_url() -> str:
@@ -224,7 +250,7 @@ async def _stream(client, mine) -> None:
                 message = await asyncio.wait_for(ws.recv(), SILENT_AFTER)
             except asyncio.TimeoutError:
                 raise Silent(f"no message from {url} for {SILENT_AFTER} seconds")
-            got = parse_mark_prices(message)
+            got = parse_prices(message)
             if not got or not mine():
                 continue
             state["prices"].update(got)
@@ -232,14 +258,11 @@ async def _stream(client, mine) -> None:
             state["source"], state["error"] = "WebSocket", None
             if loop.time() - last >= PROCESS_EVERY:
                 last = loop.time()
-                try:
-                    await poll_once(client, prices=dict(state["prices"]))
-                except Exception as exc:     # a database hiccup must not drop the price feed
-                    state["error"] = f"{type(exc).__name__}: {exc}"
+                _spawn(_checks(client, dict(state["prices"])))      # not awaited: the feed never waits for the checks
 
 
 async def _rest_for(client, seconds: float, mine) -> None:
-    """REST mark prices every REST_EVERY seconds for a while, so alerts and paper fills carry on while the stream is down."""
+    """REST last prices every REST_EVERY seconds for a while, so alerts and paper fills carry on while the stream is down."""
     until = asyncio.get_running_loop().time() + seconds
     while mine():
         try:

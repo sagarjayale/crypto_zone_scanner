@@ -100,16 +100,22 @@ def test_paper_positions_lock_and_move_the_target():
             paper.on_prices(db, {LIVE_KEY: 521.0}, NOW)
             t = db.scalars(select(PaperTrade).where(PaperTrade.zone_id == zid)).one()
             assert t.trail["no_target"] and t.trail["first_target"] == 557.0
-            assert paper.on_prices(db, {LIVE_KEY: 558.0}, NOW + timedelta(minutes=1)) == []   # past the target: no close
+            # past the target: no close; the live price locks step 1 at once (558 - 521 = 37: one step of 18 plus the gap)
+            # and moves the target forward one step, without waiting for a candle to close
+            live = paper.on_prices(db, {LIVE_KEY: 558.0}, NOW + timedelta(minutes=1))
+            assert [e["event"] for e in live] == ["stop moved", "target moved"]
+            assert t.stop == pytest.approx(521 + 18) and t.target == pytest.approx(557 + 18)
+            assert "live price" in t.history[-2]["note"]
             hour = NOW.replace(minute=0) + timedelta(hours=1)
             data_sync.upsert_candles(db, LIVE_KEY, "1h", [
                 {"ts": hour, "open": 521, "high": 543, "low": 520, "close": 540, "volume": 1, "oi": None},            # 22 up: 18 locked
                 {"ts": hour + timedelta(hours=1), "open": 540, "high": 562, "low": 539.5, "close": 560, "volume": 1, "oi": None}])  # target reached
             out = paper.update_trailing(db, t, hour + timedelta(hours=2))
             db.commit()
-            assert [e["event"] for e in out] == ["stop moved", "target moved"]
+            # the candles reached 562: two steps locked; the target already moved on the live price, so it stays
+            assert [e["event"] for e in out] == ["stop moved"]
             assert t.stop == pytest.approx(521 + 36) and t.target == pytest.approx(557 + 18)
-            assert t.history[-1]["field"] == "target" and "moved forward" in t.history[-1]["note"]
+            assert any(h["field"] == "target" and "moved forward" in h["note"] for h in t.history)
             assert paper.update_trailing(db, t, hour + timedelta(hours=2)) == []
             out = paper.on_prices(db, {LIVE_KEY: 556.0}, hour + timedelta(hours=2, minutes=5))
             db.refresh(t)

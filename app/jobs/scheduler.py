@@ -189,7 +189,10 @@ async def bar_close(client, now: datetime | None = None) -> dict | None:
 
     async def one(key: str):
         # this minute's timeframes, plus any whose candles fell behind (a run that was skipped or failed is caught up here)
-        wanted = sorted(set(tfs) | set(late.get(key, ())))
+        wanted = set(tfs) | set(late.get(key, ()))
+        if key in held:
+            wanted.add("1m")          # coins you hold always get 1 minute candles: the safety net and trailing stop use them
+        wanted = sorted(wanted)
         got: dict = {}
         if wanted:
             async with gate:
